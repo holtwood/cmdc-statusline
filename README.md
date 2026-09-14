@@ -91,7 +91,10 @@ Settings live in JSON; the command line can override per run.
 **Precedence caveat:** Command Code strips `--mod-option` values out of the argv a mod can
 see, so a flag is only treated as an explicit override when its value *differs from the
 built-in default*. Passing the default value explicitly (`--mod-option cwd=true`) does not
-override a config file that says otherwise.
+override a config file that says otherwise. Flag names are also global across mods: if another
+mod declares the same name, the value can be claimed by whichever mod registered it first —
+verified in a real session, `--mod-option cwd=false` does reach this mod while it is the only
+one declaring `cwd`.
 
 ## Rendering
 

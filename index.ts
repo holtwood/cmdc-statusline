@@ -112,6 +112,7 @@ type Config = Record<string, unknown>;
 
 const SEP = ' │ ';
 const GIT_TTL_MS = 5000;
+const GIT_TIMEOUT_MS = 10_000;
 const TITLE_COLUMNS = 24;
 const COST_WARN_USD = 1;
 const COST_ALERT_USD = 10;
@@ -835,11 +836,15 @@ export default function (cmd: ModApi): void {
 	const readGit = async (force: boolean): Promise<void> => {
 		if (!force && Date.now() - gitCheckedAt < GIT_TTL_MS) return;
 		gitCheckedAt = Date.now();
+		// 超时兜底：git 挂死（锁、死挂载、超大仓库）不能让 refreshing 永远为真——那会把底栏冻住
+		const controller = new AbortController();
+		const killer = setTimeout(() => controller.abort(), GIT_TIMEOUT_MS);
 		try {
 			const {stdout, code} = await cmd.exec({
 				command: 'git',
 				args: ['status', '--porcelain=v1', '-b'],
 				cwd: cmd.cwd,
+				signal: controller.signal,
 			});
 			const info =
 				code === 0
@@ -862,6 +867,8 @@ export default function (cmd: ModApi): void {
 		} catch {
 			snapshot.isRepo = false;
 			snapshot.branch = undefined;
+		} finally {
+			clearTimeout(killer);
 		}
 	};
 
@@ -921,6 +928,8 @@ export default function (cmd: ModApi): void {
 			seedTitle();
 			void seedCost();
 			startTimer();
+			// 幂等：会话被替换时若 start 再次触发，避免监听器叠加
+			process.stdout.off('resize', onResize);
 			process.stdout.on('resize', onResize);
 			void refresh();
 		},

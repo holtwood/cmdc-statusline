@@ -2,6 +2,15 @@
 
 ## 0.4.0
 
+- Robustness: the periodic `git status` runs with a 10 s abort timeout, so a hung git (index
+  lock, dead mount, enormous repository) can no longer stall the footer indefinitely — a failed
+  or aborted call just hides the git segment until the next refresh. The `resize` listener is
+  registered idempotently, so a replaced session cannot stack duplicates.
+- Verified end to end in real sessions: `--mod-option` does reach this mod; a pinned install
+  (`cmd mods add owner/repo@v0.4.0`) works and an unknown ref fails loudly; with a CJK session
+  name the footer fits a 60-column pane and collapses to `main │ ~2` in a 34-column one.
+  Caveat: flag names are global across mods — if two mods declare the same name, one of them
+  sees the value.
 - Packaging: `package.json#files` now covers the translated READMEs, `test/` and
   `CHANGELOG.md`, so an npm publish would ship the whole project. READMEs note that the
   binary is `cmdc` on Windows, and the English one documents the `refresh` trade-off on

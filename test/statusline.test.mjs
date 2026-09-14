@@ -508,6 +508,33 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	state.restore();
 }
 
+// git 挂死保护：exec 必须拿到 AbortSignal；git 抛错/被中止时底栏照常绘制（不冻住）
+{
+	const {api, state} = makeStub();
+	ns.default(api);
+	state.flags.set('refresh', '0');
+	state.hooks.onSessionStart({source: 'startup'});
+	await settle();
+	const call = state.execCalls.at(-1);
+	checkTrue('git exec receives an abort signal', call?.signal instanceof AbortSignal, JSON.stringify(Object.keys(call ?? {})));
+	state.restore();
+}
+
+{
+	const {api, state} = makeStub();
+	api.exec = async () => {
+		throw new Error('aborted');
+	};
+	ns.default(api);
+	state.flags.set('refresh', '0');
+	await useBaselineUsage(state);
+	await settle();
+	const line = strip(state.statuses.at(-1));
+	checkTrue('aborted git still paints the line', line.includes('deepseek-v4.1-flash'), line);
+	checkTrue('aborted git hides the branch', !line.includes('main'), line);
+	state.restore();
+}
+
 // ascii 开关：即便 COLORTERM=truecolor 也走纯 ASCII
 {
 	const {api, state} = makeStub({env: {COLORTERM: 'truecolor'}});
