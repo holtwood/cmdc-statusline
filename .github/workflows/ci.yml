@@ -7,7 +7,13 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # 三平台跑同一套测试：Windows 上 cmd.cwd 是反斜杠路径、os.homedir() 读 USERPROFILE，
+    # 只在 Linux 跑会漏掉这类回归。
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

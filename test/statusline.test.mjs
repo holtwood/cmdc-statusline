@@ -1,6 +1,6 @@
 import {mkdtempSync, mkdirSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {basename, join} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
 // 直接吃 TypeScript：Node 22.18+/24 原生类型擦除，无需构建或 jiti。
@@ -32,6 +32,16 @@ function checkClose(name, actual, expected, tolerance = 1e-12) {
 const settle = () => new Promise(resolve => setTimeout(resolve, 25));
 const strip = text => (typeof text === 'string' ? text.replace(/\u001b\[[0-9;]*m/g, '') : text);
 
+// os.homedir() reads HOME on POSIX and USERPROFILE on Windows — redirect both. The suite
+// starts on a throwaway home so the developer's real ~/.commandcode/statusline.json can
+// never leak into an assertion.
+const homeKeys = ['HOME', 'USERPROFILE'];
+const useHome = home => {
+	for (const key of homeKeys) process.env[key] = home;
+};
+const baseHome = mkdtempSync(join(tmpdir(), 'statusline-base-home-'));
+useHome(baseHome);
+
 const ns = await import(pathToFileURL(MOD_PATH).href);
 const {
 	formatTokens,
@@ -51,6 +61,7 @@ const {
 	formatRate,
 	visibleLength,
 	loadConfig,
+	cwdBasename,
 } = ns;
 
 // ── pure helpers ────────────────────────────────────────────────────────────────────
@@ -59,6 +70,10 @@ check('formatTokens 5120', formatTokens(5120), '5.1k');
 check('formatTokens 28421', formatTokens(28421), '28k');
 check('shortModel strips vendor', shortModel('deepseek/deepseek-v4.1-flash'), 'deepseek-v4.1-flash');
 check('shortModel keeps bare id', shortModel('gpt-5.6'), 'gpt-5.6');
+check('cwdBasename posix', cwdBasename('/tmp/statusline-fixture/my-project'), 'my-project');
+check('cwdBasename windows', cwdBasename('D:\\02-repo\\github\\cmdc-statusline'), 'cmdc-statusline');
+check('cwdBasename mixed separators', cwdBasename('C:/Users/me/my-project'), 'my-project');
+check('cwdBasename empty', cwdBasename(''), undefined);
 check('formatPercent small', formatPercent(28421, 1000000), '2.8%');
 check('formatPercent big', formatPercent(850000, 1000000), '85%');
 check('formatWindow 1M', formatWindow(1000000), '1M');
@@ -359,7 +374,6 @@ const useBaselineUsage = async (state, model = 'deepseek/deepseek-v4.1-flash') =
 	});
 };
 
-const realHome = process.env.HOME;
 const fakeHome = mkdtempSync(join(tmpdir(), 'statusline-home-'));
 const slug = FIXTURE_CWD.replace(/^[/\\]+/, '').replace(/[/\\:]+/g, '-');
 const seededSession = 'seeded-session-id';
@@ -426,19 +440,19 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 
 // 恢复会话：session 名由 meta.json seed
 {
-	process.env.HOME = fakeHome;
+	useHome(fakeHome);
 	const {api, state} = makeStub();
 	ns.default(api);
 	state.flags.set('refresh', '0');
 	state.hooks.onSessionStart({source: 'resume', sessionId: seededSession});
 	await settle();
 	check('resume seeds title from meta.json', strip(state.statuses.at(-1)), 'Seeded Session Name │ main ↑1↓2 │ +1 ~1 ?1 │ my-project');
-	process.env.HOME = realHome;
+	useHome(baseHome);
 }
 
 // 会话花费：恢复会话时从 transcript 求和，重启不清零
 {
-	process.env.HOME = fakeHome;
+	useHome(fakeHome);
 	const costSession = 'cost-session-id';
 	writeFileSync(
 		join(projectDir, `${costSession}.jsonl`),
@@ -465,19 +479,19 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	checkTrue('seeded cost + new request', strip(state.statuses.at(-1)).includes('$0.354'), strip(state.statuses.at(-1)));
 	const message = await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec});
 	checkTrue('/statusline shows restored portion', message.message.includes('含恢复'), message.message);
-	process.env.HOME = realHome;
+	useHome(baseHome);
 }
 
 // 损坏的 meta.json 不崩、不编名字
 {
-	process.env.HOME = fakeHome;
+	useHome(fakeHome);
 	const {api, state} = makeStub();
 	ns.default(api);
 	state.flags.set('refresh', '0');
 	state.hooks.onSessionStart({source: 'resume', sessionId: 'broken-session-id'});
 	await settle();
 	check('corrupt meta.json is ignored', strip(state.statuses.at(-1)), 'main ↑1↓2 │ +1 ~1 ?1 │ my-project');
-	process.env.HOME = realHome;
+	useHome(baseHome);
 }
 
 // headless：无能力 → 不 spawn git、不调 setStatus
@@ -585,10 +599,9 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	mkdirSync(join(cfgProject, '.commandcode'), {recursive: true});
 	writeFileSync(join(cfgHome, '.commandcode', 'statusline.json'), JSON.stringify({cwd: false, speed: false}));
 	writeFileSync(join(cfgProject, '.commandcode', 'statusline.json'), JSON.stringify({cwd: true, cache: false}));
-	const projectName = cfgProject.split('/').pop();
+	const projectName = basename(cfgProject);
 
-	const savedHome = process.env.HOME;
-	process.env.HOME = cfgHome;
+	useHome(cfgHome);
 	const {api, state} = makeStub({cwd: cfgProject});
 	ns.default(api);
 	state.flags.set('refresh', '0');
@@ -606,7 +619,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	// 命令行与默认值不同 → 命令行赢过配置
 	writeFileSync(join(cfgHome, '.commandcode', 'statusline.json'), JSON.stringify({speed: true}));
 	const cli = makeStub({cwd: cfgProject});
-	process.env.HOME = cfgHome;
+	useHome(cfgHome);
 	ns.default(cli.api);
 	cli.state.flags.set('refresh', '0');
 	cli.state.flags.set('git', false);
@@ -615,7 +628,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	await settle();
 	checkTrue('cli flag beats config (speed off)', !strip(cli.state.statuses.at(-1)).includes('tok/s'), strip(cli.state.statuses.at(-1)));
 	cli.state.restore();
-	process.env.HOME = savedHome;
+	useHome(baseHome);
 }
 
 // 子代理用量：产品自身不计入 transcript，故只显示 token、不动精确花费

@@ -4,9 +4,9 @@
 
 > Этот перевод сделан с помощью ИИ. При разночтениях приоритет у [английской версии](README.md). PR с исправлениями приветствуются.
 
-Строка состояния для [Command Code](https://commandcode.ai) (`cmdc`): модель, полоса контекста
-с градиентом, доля попаданий в кэш, стоимость сессии, скорость вывода, расход субагентов, имя
-сессии и состояние git — всё в строке под полем ввода.
+Строка состояния для [Command Code](https://commandcode.ai) (`cmd`, в Windows — `cmdc`): модель,
+полоса контекста с градиентом, доля попаданий в кэш, стоимость сессии, скорость вывода, расход
+субагентов, имя сессии и состояние git — всё в строке под полем ввода.
 
 ```text
 deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
@@ -18,23 +18,49 @@ deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) 
 ## Установка
 
 ```bash
-cmd mods add holtwood/cmdc-statusline -g     # область пользователя (без -g — область проекта)
+cmd mods add cmdc-statusline -g              # из npm (-g = область пользователя; без -g — только текущий проект)
 cmd mods list                                # мод должен появиться в списке
 ```
 
-Можно и просто положить файл, без пакетного менеджера:
+Тот же пакет ставится и прямо из git: `cmd mods add holtwood/cmdc-statusline -g`, если не хочется
+зависеть от реестра.
+
+Можно и просто положить файл, без пакетного менеджера: `index.ts` в
+`~/.commandcode/mods/statusline.ts` (`%USERPROFILE%\.commandcode\mods\statusline.ts` в Windows),
+затем новая сессия:
 
 ```bash
-mkdir -p ~/.commandcode/mods
-curl -o ~/.commandcode/mods/statusline.ts \
+mkdir -p ~/.commandcode/mods && curl -o ~/.commandcode/mods/statusline.ts \
   https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
 ```
 
-> В Windows бинарник называется `cmdc` (`cmd` открывает оболочку Windows) — используйте `cmdc mods add …`, `cmdc mods list` и т. д.
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.commandcode\mods" | Out-Null
+Invoke-WebRequest -OutFile "$env:USERPROFILE\.commandcode\mods\statusline.ts" `
+  https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
+```
+
+Выберите один способ установки: пакет и вручную положенный файл — это два разных мода, объявляющих
+одни и те же имена флагов, а Command Code разрешает имена флагов глобально между модами.
+
+> В Windows бинарник называется `cmdc` (`cmd` открывает оболочку Windows) — используйте `cmdc mods add …`, `cmdc mods list`, `cmdc --mod .\index.ts`.
 
 Попробовать без установки: `cmd --mod ./index.ts`. Моды загружаются один раз на процесс — после
 правок нужен `/reload` или новая сессия. Шага сборки нет: Command Code компилирует TypeScript
 при загрузке.
+
+### Установка силами ИИ-агента
+
+Если не хочется трогать оболочку, вставьте это своему агенту (Claude Code, Codex, Command Code и т. п.):
+
+> Установи мод Command Code `cmdc-statusline` в области пользователя: выполни
+> `cmd mods add cmdc-statusline -g` (в Windows используй `cmdc` вместо `cmd`; если npm не находит
+> пакет, возьми `holtwood/cmdc-statusline`), затем подтверди через `cmd mods list`, что
+> `cmdc-statusline` виден как пользовательский мод и без предупреждений о загрузке. В конце
+> напомни мне перезапустить сессию, чтобы строка отрисовалась.
+
+Права root не нужны: запись идёт только в `~/.commandcode/mods/` и в ключ `mods.sources`
+файла `~/.commandcode/settings.json`.
 
 ## Сегменты
 
@@ -126,12 +152,13 @@ python3 scripts/gen-model-tables.py --check   # упадёт, если табл�
 ## Разработка
 
 ```bash
-node test/statusline.test.mjs     # 136 проверок, без зависимостей и сборки
+node test/statusline.test.mjs     # весь набор: без зависимостей и сборки
 python3 scripts/gen-model-tables.py --check
 ```
 
 Тесты импортируют `index.ts` напрямую: Node 22.18+/24 удаляет типы, поэтому инструментарий не нужен.
-Проверить другую копию: `STATUSLINE_MOD=/path/to/statusline.ts`.
+Проверить другую копию: `STATUSLINE_MOD=/path/to/statusline.ts`. CI прогоняет тот же набор в Linux,
+macOS и Windows.
 
 ## Известные ограничения
 
@@ -142,6 +169,9 @@ python3 scripts/gen-model-tables.py --check
   и расчёт по запросу сверены с числами продукта).
 - Имя сессии и восстановление стоимости читают `~/.commandcode/projects/**` — недокументированное
   расположение. Всё обёрнуто так, что при изменении раскладки просто исчезает сегмент, а не падает сессия.
+- **Опрос в огромных репозиториях.** Строка перечитывает `git status` каждые `refresh` секунд
+  (по умолчанию 10). В небольших репозиториях вызов бесплатный, в огромных — нет: увеличьте
+  `refresh` или поставьте `0` и положитесь на обновления по событиям.
 
 ## Похожие проекты
 

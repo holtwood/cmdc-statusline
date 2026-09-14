@@ -4,9 +4,9 @@
 
 > Diese Übersetzung wurde mit KI-Unterstützung erstellt. Bei Unklarheiten gilt die [englische Fassung](README.md). Korrektur-PRs sind willkommen.
 
-Eine Statuszeile für [Command Code](https://commandcode.ai) (`cmdc`): Modell, Kontextbalken mit
-Farbverlauf, Cache-Trefferquote, Sitzungskosten, Ausgabegeschwindigkeit, Subagent-Verbrauch,
-Sitzungsname und Git-Status — alles in der Zeile unter dem Eingabefeld.
+Eine Statuszeile für [Command Code](https://commandcode.ai) (`cmd`, unter Windows `cmdc`): Modell,
+Kontextbalken mit Farbverlauf, Cache-Trefferquote, Sitzungskosten, Ausgabegeschwindigkeit,
+Subagent-Verbrauch, Sitzungsname und Git-Status — alles in der Zeile unter dem Eingabefeld.
 
 ```text
 deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
@@ -19,23 +19,50 @@ nutzt dieses Mod.
 ## Installation
 
 ```bash
-cmd mods add holtwood/cmdc-statusline -g     # Benutzer-Scope (ohne -g: Projekt-Scope)
+cmd mods add cmdc-statusline -g              # von npm (-g = Benutzer-Scope; ohne -g nur das aktuelle Projekt)
 cmd mods list                                # das Mod sollte auftauchen
 ```
 
-Alternativ die Datei direkt ablegen, ohne Paketverwaltung:
+Dasselbe Paket lässt sich auch direkt aus git installieren:
+`cmd mods add holtwood/cmdc-statusline -g`, wenn die Registry nicht mitwirken soll.
+
+Alternativ die Datei direkt ablegen, ohne Paketverwaltung: `index.ts` nach
+`~/.commandcode/mods/statusline.ts` (`%USERPROFILE%\.commandcode\mods\statusline.ts` unter Windows)
+legen und eine neue Sitzung starten:
 
 ```bash
-mkdir -p ~/.commandcode/mods
-curl -o ~/.commandcode/mods/statusline.ts \
+mkdir -p ~/.commandcode/mods && curl -o ~/.commandcode/mods/statusline.ts \
   https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
 ```
 
-> Unter Windows heißt das Binary `cmdc` (`cmd` öffnet die Windows-Shell) — dort also `cmdc mods add …`, `cmdc mods list` usw.
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.commandcode\mods" | Out-Null
+Invoke-WebRequest -OutFile "$env:USERPROFILE\.commandcode\mods\statusline.ts" `
+  https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
+```
+
+Nur einen Installationsweg wählen: Paket und abgelegte Datei sind zwei verschiedene Mods, die
+dieselben Flag-Namen deklarieren — Command Code löst Flag-Namen global über Mods hinweg auf.
+
+> Unter Windows heißt das Binary `cmdc` (`cmd` öffnet die Windows-Shell) — dort also `cmdc mods add …`, `cmdc mods list`, `cmdc --mod .\index.ts`.
 
 Ohne Installation testen: `cmd --mod ./index.ts`. Mods werden einmal pro Prozess geladen — nach
 Änderungen `/reload` oder eine neue Sitzung. Kein Build-Schritt: Command Code kompiliert das
 TypeScript beim Laden.
+
+### Installation durch einen KI-Agenten
+
+Wer die Shell nicht selbst anfassen möchte, gibt dem Agenten (Claude Code, Codex, Command Code, …)
+Folgendes:
+
+> Installiere das Command-Code-Mod `cmdc-statusline` im Benutzer-Scope: führe
+> `cmd mods add cmdc-statusline -g` aus (unter Windows `cmdc` statt `cmd`; findet npm das Paket
+> nicht, nimm `holtwood/cmdc-statusline`), und bestätige dann mit `cmd mods list`, dass
+> `cmdc-statusline` als Benutzer-Scope ohne Ladewarnungen erscheint. Erinnere mich abschließend
+> daran, die Sitzung neu zu starten, damit die Zeile gezeichnet wird.
+
+Es braucht kein root und schreibt nur nach `~/.commandcode/mods/` sowie in den `mods.sources`-Eintrag
+in `~/.commandcode/settings.json`.
 
 ## Segmente
 
@@ -127,12 +154,13 @@ Ein fehlendes Modell degradiert sauber: ohne Fenster kein Balken/Prozentwert, oh
 ## Entwicklung
 
 ```bash
-node test/statusline.test.mjs     # 136 Assertions, keine Abhängigkeiten, kein Build
+node test/statusline.test.mjs     # die ganze Suite: keine Abhängigkeiten, kein Build
 python3 scripts/gen-model-tables.py --check
 ```
 
 Die Tests importieren `index.ts` direkt — Node 22.18+/24 entfernt die Typen, daher ist keine
-Toolchain nötig. Andere Kopie testen mit `STATUSLINE_MOD=/path/to/statusline.ts`.
+Toolchain nötig. Andere Kopie testen mit `STATUSLINE_MOD=/path/to/statusline.ts`. Die CI fährt
+dieselbe Suite unter Linux, macOS und Windows.
 
 ## Bekannte Einschränkungen
 
@@ -144,6 +172,9 @@ Toolchain nötig. Andere Kopie testen mit `STATUSLINE_MOD=/path/to/statusline.ts
   des Produkts abgeglichen).
 - Sitzungsname und Kostenwiederherstellung lesen `~/.commandcode/projects/**` — eine undokumentierte
   Ablage. Alles ist abgesichert: eine Änderung bedeutet „Segment fehlt", niemals einen Absturz.
+- **Polling in riesigen Repositories.** Die Zeile liest `git status` alle `refresh` Sekunden neu
+  (Standard 10). In kleinen Repos ist der Aufruf gratis, in riesigen nicht — erhöhe `refresh` oder
+  setze ihn auf `0` und überlasse es den ereignisgesteuerten Aktualisierungen.
 
 ## Ähnliche Projekte
 

@@ -4,9 +4,9 @@
 
 > Cette traduction a été produite avec l'aide d'une IA. En cas d'ambiguïté, la [version anglaise](README.md) fait foi. Les PR de correction sont bienvenues.
 
-Une ligne de statut pour [Command Code](https://commandcode.ai) (`cmdc`) : modèle, barre de
-contexte en dégradé, taux de succès du cache, coût de la session, vitesse de sortie, usage des
-sous-agents, nom de session et état git, le tout sur la ligne sous la zone de saisie.
+Une ligne de statut pour [Command Code](https://commandcode.ai) (`cmd`, ou `cmdc` sous Windows) :
+modèle, barre de contexte en dégradé, taux de succès du cache, coût de la session, vitesse de sortie,
+usage des sous-agents, nom de session et état git, le tout sur la ligne sous la zone de saisie.
 
 ```text
 deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
@@ -19,23 +19,51 @@ fait ce mod.
 ## Installation
 
 ```bash
-cmd mods add holtwood/cmdc-statusline -g     # portée utilisateur (sans -g : portée projet)
+cmd mods add cmdc-statusline -g              # depuis npm (-g = portée utilisateur ; sans -g, le projet courant)
 cmd mods list                                # le mod doit apparaître
 ```
 
-Vous pouvez aussi déposer le fichier à la main, sans passer par les paquets :
+Le même paquet s'installe aussi depuis git : `cmd mods add holtwood/cmdc-statusline -g`, si vous
+préférez ne pas dépendre du registre.
+
+Vous pouvez aussi déposer le fichier à la main, sans passer par les paquets : placez `index.ts` dans
+`~/.commandcode/mods/statusline.ts` (`%USERPROFILE%\.commandcode\mods\statusline.ts` sous Windows)
+et ouvrez une nouvelle session :
 
 ```bash
-mkdir -p ~/.commandcode/mods
-curl -o ~/.commandcode/mods/statusline.ts \
+mkdir -p ~/.commandcode/mods && curl -o ~/.commandcode/mods/statusline.ts \
   https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
 ```
 
-> Sous Windows, le binaire est `cmdc` (`cmd` ouvre le shell Windows) : utilisez `cmdc mods add …`, `cmdc mods list`, etc.
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.commandcode\mods" | Out-Null
+Invoke-WebRequest -OutFile "$env:USERPROFILE\.commandcode\mods\statusline.ts" `
+  https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
+```
+
+Choisissez une seule méthode d'installation : le paquet et le fichier déposé sont deux mods
+distincts qui déclarent les mêmes noms de flag — Command Code résout ces noms globalement entre les
+mods.
+
+> Sous Windows, le binaire est `cmdc` (`cmd` ouvre le shell Windows) : utilisez `cmdc mods add …`, `cmdc mods list`, `cmdc --mod .\index.ts`.
 
 Essai sans installation : `cmd --mod ./index.ts`. Les mods ne sont chargés qu'une fois par
 processus : utilisez `/reload` ou une nouvelle session après modification. Aucune étape de build —
 Command Code compile le TypeScript au chargement.
+
+### Installation par un agent IA
+
+Si vous préférez ne pas toucher au shell, collez ceci dans votre agent (Claude Code, Codex,
+Command Code, …) :
+
+> Installe le mod Command Code `cmdc-statusline` en portée utilisateur : exécute
+> `cmd mods add cmdc-statusline -g` (sous Windows, utilise `cmdc` au lieu de `cmd` ; si npm ne trouve
+> pas le paquet, utilise `holtwood/cmdc-statusline`), puis vérifie que `cmd mods list` affiche
+> `cmdc-statusline` en portée utilisateur sans avertissement de chargement. Enfin, rappelle-moi de
+> redémarrer la session pour que la ligne s'affiche.
+
+Aucun droit root n'est requis : il n'écrit que dans `~/.commandcode/mods/` et dans l'entrée
+`mods.sources` de `~/.commandcode/settings.json`.
 
 ## Segments
 
@@ -128,12 +156,13 @@ pas de coût.
 ## Développement
 
 ```bash
-node test/statusline.test.mjs     # 136 assertions, sans dépendance ni build
+node test/statusline.test.mjs     # toute la suite : sans dépendance ni build
 python3 scripts/gen-model-tables.py --check
 ```
 
 Les tests importent `index.ts` directement : Node 22.18+/24 retire les types, donc aucune chaîne
 d'outils n'est nécessaire. Ciblez une autre copie avec `STATUSLINE_MOD=/path/to/statusline.ts`.
+La CI exécute la même suite sous Linux, macOS et Windows.
 
 ## Limites connues
 
@@ -144,6 +173,9 @@ d'outils n'est nécessaire. Ciblez une autre copie avec `STATUSLINE_MOD=/path/to
   le calcul par requête sont confrontés aux chiffres du produit).
 - Le nom de session et la restauration du coût lisent `~/.commandcode/projects/**`, une disposition
   non documentée. Tout est protégé : un changement se traduit par « segment absent », jamais un crash.
+- **Interrogation sur les très gros dépôts.** La ligne relit `git status` toutes les `refresh`
+  secondes (10 par défaut). Cet appel est gratuit sur un petit dépôt, pas sur un énorme : augmentez
+  `refresh` ou mettez-le à `0` et laissez les rafraîchissements par événement faire le travail.
 
 ## Projets similaires
 

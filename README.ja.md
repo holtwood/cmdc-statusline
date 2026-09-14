@@ -4,9 +4,9 @@
 
 > この翻訳は AI が作成したものです。解釈が分かれる場合は [英語版](README.md) を優先します。修正の PR を歓迎します。
 
-[Command Code](https://commandcode.ai)（`cmdc`）のステータスライン — モデル、グラデーション付きの
-コンテキストバー、キャッシュヒット率、セッション費用、出力速度、サブエージェント使用量、セッション名、
-git の状態を、入力欄の下の 1 行にまとめて表示します。
+[Command Code](https://commandcode.ai)（`cmd`、Windows では `cmdc`）のステータスライン — モデル、
+グラデーション付きのコンテキストバー、キャッシュヒット率、セッション費用、出力速度、サブエージェント
+使用量、セッション名、git の状態を、入力欄の下の 1 行にまとめて表示します。
 
 ```text
 deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
@@ -18,23 +18,50 @@ Command Code には Claude Code のような `statusLine` 外部コマンドフ�
 ## インストール
 
 ```bash
-cmd mods add holtwood/cmdc-statusline -g     # ユーザースコープ（-g を外すとプロジェクトスコープ）
+cmd mods add cmdc-statusline -g              # npm から（-g = ユーザースコープ。外すと現在のプロジェクトのみ）
 cmd mods list                                # 一覧に表示されれば OK
 ```
 
-パッケージ管理を使わずファイルを直接置くこともできます。
+同じパッケージは git からも入れられます: `cmd mods add holtwood/cmdc-statusline -g`（レジストリに
+依存したくない場合）。
+
+パッケージ管理を使わずファイルを直接置くこともできます——`index.ts` を
+`~/.commandcode/mods/statusline.ts`（Windows では `%USERPROFILE%\.commandcode\mods\statusline.ts`）
+に置き、新しいセッションを開いてください:
 
 ```bash
-mkdir -p ~/.commandcode/mods
-curl -o ~/.commandcode/mods/statusline.ts \
+mkdir -p ~/.commandcode/mods && curl -o ~/.commandcode/mods/statusline.ts \
   https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
 ```
 
-> Windows ではコマンドは `cmdc` です（`cmd` は Windows のシェル）——`cmdc mods add …` と読み替えてください。
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.commandcode\mods" | Out-Null
+Invoke-WebRequest -OutFile "$env:USERPROFILE\.commandcode\mods\statusline.ts" `
+  https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
+```
+
+導入方法はどちらか一方にしてください: パッケージと直接配置は別々の mod で、同じ flag 名を宣言します。
+flag 名は mod をまたいでグローバルに解決されます。
+
+> Windows ではコマンドは `cmdc` です（`cmd` は Windows のシェル）——`cmdc mods add …`、`cmdc mods list`、`cmdc --mod .\index.ts` と読み替えてください。
 
 インストールせずに試す: `cmd --mod ./index.ts`。mod は 1 プロセスにつき 1 回だけ読み込まれます。
 変更後は `/reload` か新しいセッションで反映してください。ビルド手順は不要です（Command Code が
 読み込み時に TypeScript をコンパイルします）。
+
+### AI エージェントに任せる
+
+自分でコマンドを打ちたくない場合は、以下をエージェント（Claude Code、Codex、Command Code など）に
+貼り付けてください:
+
+> Command Code の mod `cmdc-statusline` をユーザースコープで入れてください:
+> `cmd mods add cmdc-statusline -g` を実行（Windows では `cmd` の代わりに `cmdc`。npm で見つからない
+> 場合は `holtwood/cmdc-statusline` を使用）、その後 `cmd mods list` で `cmdc-statusline` が
+> ユーザースコープとして表示され、読み込み警告がないことを確認してください。最後に、フッターを表示
+> させるためにセッションの再起動を促してください。
+
+root は不要で、書き込まれるのは `~/.commandcode/mods/` と `~/.commandcode/settings.json` の
+`mods.sources` だけです。
 
 ## セグメント
 
@@ -124,12 +151,13 @@ python3 scripts/gen-model-tables.py --check   # 表がずれていれば失敗�
 ## 開発
 
 ```bash
-node test/statusline.test.mjs     # 136 アサーション、依存ゼロ・ビルド不要
+node test/statusline.test.mjs     # スイート全体: 依存ゼロ・ビルド不要
 python3 scripts/gen-model-tables.py --check
 ```
 
 テストは `index.ts` を直接読み込みます。Node 22.18+/24 が型を除去するためツールチェーンは不要です。
-別のコピーをテストするには `STATUSLINE_MOD=/path/to/statusline.ts`。
+別のコピーをテストするには `STATUSLINE_MOD=/path/to/statusline.ts`。CI は Linux・macOS・Windows で
+同じスイートを実行します。
 
 ## 既知の制限
 
@@ -141,6 +169,9 @@ python3 scripts/gen-model-tables.py --check
   製品自身の数値と照合済み）。
 - セッション名と費用の復元は `~/.commandcode/projects/**`（非公開の配置）を読みます。すべて
   フォールバック付きなので、配置が変わっても「セグメントが消える」だけでクラッシュしません。
+- **巨大リポジトリでのポーリング。** フッターは `refresh` 秒ごと（既定 10 秒）に `git status` を
+  読み直します。小さいリポジトリでは無視できるコストですが、巨大なものではそうではありません。
+  `refresh` を上げるか `0` にして、イベント駆動の更新に任せてください。
 
 ## 類似プロジェクト
 

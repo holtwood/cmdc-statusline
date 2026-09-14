@@ -1,6 +1,6 @@
 {
 	"name": "cmdc-statusline",
-	"version": "0.4.0",
+	"version": "0.4.1",
 	"description": "A status line mod for Command Code (cmdc): model, gradient context bar, cache hit rate, session cost, output speed, sub-agent usage, session name and git state.",
 	"type": "module",
 	"commandcode": {
@@ -19,7 +19,8 @@
 	"scripts": {
 		"test": "node test/statusline.test.mjs",
 		"tables:check": "python3 scripts/gen-model-tables.py --check",
-		"tables:generate": "python3 scripts/gen-model-tables.py"
+		"tables:generate": "python3 scripts/gen-model-tables.py",
+		"prepublishOnly": "node test/statusline.test.mjs"
 	},
 	"keywords": [
 		"commandcode",
@@ -38,5 +39,9 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/holtwood/cmdc-statusline.git"
+	},
+	"homepage": "https://github.com/holtwood/cmdc-statusline#readme",
+	"bugs": {
+		"url": "https://github.com/holtwood/cmdc-statusline/issues"
 	}
 }

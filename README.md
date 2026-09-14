@@ -2,9 +2,9 @@
 
 **English** | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Русский](README.ru.md)
 
-A status line for [Command Code](https://commandcode.ai) (`cmdc`) — model, a gradient
-context bar, cache hit rate, session cost, output speed, sub-agent usage, session name and
-git state, all on the row under the input panel.
+A status line for [Command Code](https://commandcode.ai) (`cmd`, or `cmdc` on Windows) — model,
+a gradient context bar, cache hit rate, session cost, output speed, sub-agent usage, session
+name and git state, all on the row under the input panel.
 
 ```text
 deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
@@ -17,23 +17,51 @@ mod uses.
 ## Install
 
 ```bash
-cmd mods add holtwood/cmdc-statusline        # user scope (-g); drop -g for project scope
+cmd mods add cmdc-statusline -g              # from npm (-g = user scope; drop it to install for one project)
 cmd mods list                                # should list this mod
 ```
 
-Or drop the file in by hand and skip the package machinery:
+The same package installs straight from git — `cmd mods add holtwood/cmdc-statusline -g` — if you
+would rather not depend on the registry.
+
+Or drop the single file in by hand and skip the package machinery — put `index.ts` at
+`~/.commandcode/mods/statusline.ts` (`%USERPROFILE%\.commandcode\mods\statusline.ts` on
+Windows) and start a new session:
 
 ```bash
-mkdir -p ~/.commandcode/mods
-curl -o ~/.commandcode/mods/statusline.ts \
+mkdir -p ~/.commandcode/mods && curl -o ~/.commandcode/mods/statusline.ts \
   https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
 ```
 
-> On Windows the binary is `cmdc` (bare `cmd` opens the Windows shell) — run `cmdc mods add …`, `cmdc mods list`, and so on.
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.commandcode\mods" | Out-Null
+Invoke-WebRequest -OutFile "$env:USERPROFILE\.commandcode\mods\statusline.ts" `
+  https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
+```
+
+Pick one install path, not both: the package and the drop-in file are two separate mods, and two
+copies declare the same flag names — Command Code resolves flag names globally across mods.
+
+> On Windows the binary is `cmdc` (`cmd` is the Windows shell) — `cmdc mods add …`, `cmdc mods list`,
+> `cmdc --mod .\index.ts`.
 
 Try it without installing: `cmd --mod ./index.ts`. Mods load once per process — use
 `/reload` or start a new session to pick up a change. No build step: Command Code compiles
 the TypeScript at load.
+
+### Install with an AI agent
+
+Paste this into your agent (Claude Code, Codex, Command Code, …) if you would rather not
+touch the shell yourself:
+
+> Install the Command Code mod `cmdc-statusline` at user scope: run
+> `cmd mods add cmdc-statusline -g` (use `cmdc` instead of `cmd` on Windows; if npm cannot find
+> the package, use `holtwood/cmdc-statusline` instead), then confirm `cmd mods list` shows
+> `cmdc-statusline` under user scope with no load warnings. Tell me to restart the session so the
+> footer renders.
+
+It needs no root, and it touches only `~/.commandcode/mods/` plus the `mods.sources` entry in
+`~/.commandcode/settings.json`.
 
 ## Segments
 
@@ -129,12 +157,13 @@ no cost without a price.
 ## Development
 
 ```bash
-node test/statusline.test.mjs     # 136 assertions, no dependencies, no build
+node test/statusline.test.mjs     # the whole suite: no dependencies, no build step
 python3 scripts/gen-model-tables.py --check
 ```
 
 Tests import `index.ts` directly — Node 22.18+/24 strips the types, so there is no toolchain.
-Point them at another copy with `STATUSLINE_MOD=/path/to/statusline.ts`.
+Point them at another copy with `STATUSLINE_MOD=/path/to/statusline.ts`. CI runs the same
+suite on Linux, macOS and Windows.
 
 ## Known limitations
 
@@ -147,7 +176,6 @@ Point them at another copy with `STATUSLINE_MOD=/path/to/statusline.ts`.
 - The session name and cost restore read `~/.commandcode/projects/**` — an undocumented
   layout. Everything is wrapped so a layout change degrades to "segment missing", never a
   crash.
-
 - **Polling on huge repositories.** The footer re-reads `git status` every `refresh`
   seconds (default 10). That call is free in small repos but not in enormous ones — raise
   `refresh` or set it to `0` and let the event-driven refreshes do the work.

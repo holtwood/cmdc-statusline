@@ -4,8 +4,9 @@
 
 > 本譯文由 AI 輔助產生，若有歧義以 [英文版](README.md) 為準，歡迎送 PR 修正。
 
-[Command Code](https://commandcode.ai)（`cmdc`）的狀態列 —— 模型、漸層上下文進度條、快取命中率、
-工作階段花費、輸出速度、子代理用量、工作階段名稱與 git 狀態，全部顯示在輸入框下方那一行。
+[Command Code](https://commandcode.ai)（`cmd`，Windows 上為 `cmdc`）的狀態列 —— 模型、漸層上下文
+進度條、快取命中率、工作階段花費、輸出速度、子代理用量、工作階段名稱與 git 狀態，全部顯示在輸入框
+下方那一行。
 
 ```text
 deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
@@ -17,22 +18,45 @@ Command Code 沒有 Claude Code 那種 `statusLine` 外部指令掛鉤——`cmd
 ## 安裝
 
 ```bash
-cmd mods add holtwood/cmdc-statusline -g     # 使用者層級；去掉 -g 則為專案層級
+cmd mods add cmdc-statusline -g              # npm 安裝（-g = 使用者層級；去掉 -g 則只裝到目前專案）
 cmd mods list                                # 應能列出本 mod
 ```
 
-也可以直接投放檔案、不使用套件管理：
+同一個套件也可以直接走 git：`cmd mods add holtwood/cmdc-statusline -g`，不想依賴 registry 時可用。
+
+也可以直接投放檔案、不使用套件管理——把 `index.ts` 放到
+`~/.commandcode/mods/statusline.ts`（Windows 上為 `%USERPROFILE%\.commandcode\mods\statusline.ts`）
+再開新工作階段：
 
 ```bash
-mkdir -p ~/.commandcode/mods
-curl -o ~/.commandcode/mods/statusline.ts \
+mkdir -p ~/.commandcode/mods && curl -o ~/.commandcode/mods/statusline.ts \
   https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
 ```
 
-> Windows 上指令是 `cmdc`（`cmd` 是系統 shell）——即 `cmdc mods add …`、`cmdc mods list`。
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.commandcode\mods" | Out-Null
+Invoke-WebRequest -OutFile "$env:USERPROFILE\.commandcode\mods\statusline.ts" `
+  https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
+```
+
+兩種裝法挑一種，別都裝：套件與投放檔案是兩個獨立的 mod，會宣告同名 flag —— Command Code 的 flag
+名稱是跨 mod 全域解析的。
+
+> Windows 上指令是 `cmdc`（`cmd` 是系統 shell）——即 `cmdc mods add …`、`cmdc mods list`、`cmdc --mod .\index.ts`。
 
 免安裝試跑：`cmd --mod ./index.ts`。mod 每個行程只載入一次——改完請用 `/reload` 或開新工作階段。
 不需建置步驟：Command Code 在載入時直接編譯 TypeScript。
+
+### 交給 AI 代裝
+
+不想自己敲指令的話，把下面這段貼給 agent（Claude Code、Codex、Command Code 等）：
+
+> 幫我安裝 Command Code 的 mod `cmdc-statusline`（使用者層級）：執行
+> `cmd mods add cmdc-statusline -g`（Windows 上用 `cmdc` 代替 `cmd`；若 npm 找不到該套件，改用
+> `holtwood/cmdc-statusline`），然後確認 `cmd mods list` 中 `cmdc-statusline` 顯示為使用者層級且沒有
+> 載入警告。最後提醒我重啟工作階段，好讓底欄渲染出來。
+
+不需要 root，只會寫入 `~/.commandcode/mods/` 與 `~/.commandcode/settings.json` 裡的 `mods.sources`。
 
 ## 欄位
 
@@ -121,12 +145,13 @@ python3 scripts/gen-model-tables.py --check   # 表已漂移則失敗（CI 會�
 ## 開發
 
 ```bash
-node test/statusline.test.mjs     # 136 項斷言，零依賴、無需建置
+node test/statusline.test.mjs     # 整套測試：零依賴、無需建置
 python3 scripts/gen-model-tables.py --check
 ```
 
 測試直接匯入 `index.ts` —— Node 22.18+/24 原生抹除型別，無需任何工具鏈。
-用 `STATUSLINE_MOD=/path/to/statusline.ts` 可改測另一份副本。
+用 `STATUSLINE_MOD=/path/to/statusline.ts` 可改測另一份副本。CI 在 Linux、macOS 與 Windows 上
+跑同一套測試。
 
 ## 已知限制
 
@@ -136,6 +161,8 @@ python3 scripts/gen-model-tables.py --check
   `scripts/gen-model-tables.py`（恢復種子與每次請求的算法都已對過產品自己的數字）。
 - 工作階段名稱與花費恢復需要讀 `~/.commandcode/projects/**` —— 未文件化的佈局。所有讀取都有兜底：
   佈局改變只會「少一個欄位」，不會崩潰。
+- **超大倉庫的輪詢。** 底欄每 `refresh` 秒重讀一次 `git status`（預設 10 秒）。小倉庫裡這次呼叫是
+  白送的，超大倉庫不是——把 `refresh` 調大或設為 `0`，交給事件驅動的刷新。
 
 ## 同類專案
 

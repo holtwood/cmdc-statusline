@@ -314,6 +314,12 @@ export function shortModel(model: string): string {
 	return index === -1 ? model : model.slice(index + 1);
 }
 
+// cmd.cwd 在 Windows 上是反斜杠绝对路径（实测 D:\...），故两种分隔符都要切
+export function cwdBasename(cwd: string): string | undefined {
+	const parts = cwd.split(/[/\\]/).filter(Boolean);
+	return parts.length > 0 ? parts[parts.length - 1] : undefined;
+}
+
 export function formatTokens(tokens: number): string {
 	if (tokens < 1000) return String(tokens);
 	if (tokens < 10000) return `${(tokens / 1000).toFixed(1)}k`;
@@ -806,10 +812,7 @@ export default function (cmd: ModApi): void {
 		return Math.max(20, columns - 2);
 	};
 
-	const cwdName = (): string | undefined => {
-		const parts = cmd.cwd.split('/').filter(Boolean);
-		return parts.length > 0 ? parts[parts.length - 1] : undefined;
-	};
+	const cwdName = (): string | undefined => cwdBasename(cmd.cwd);
 
 	const seedTitle = (): void => {
 		if (!flag('name', true) || !sessionId || snapshot.title) return;

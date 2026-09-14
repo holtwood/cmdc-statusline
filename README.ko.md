@@ -4,9 +4,9 @@
 
 > 이 번역은 AI가 작성했습니다. 해석이 갈리는 경우 [영문판](README.md)을 기준으로 하며, 수정 PR을 환영합니다.
 
-[Command Code](https://commandcode.ai)(`cmdc`)용 상태 표시줄 — 모델, 그라데이션 컨텍스트 바,
-캐시 적중률, 세션 비용, 출력 속도, 서브에이전트 사용량, 세션 이름, git 상태를 입력창 아래 한 줄에
-모두 표시합니다.
+[Command Code](https://commandcode.ai)(`cmd`, Windows에서는 `cmdc`)용 상태 표시줄 — 모델,
+그라데이션 컨텍스트 바, 캐시 적중률, 세션 비용, 출력 속도, 서브에이전트 사용량, 세션 이름, git 상태를
+입력창 아래 한 줄에 모두 표시합니다.
 
 ```text
 deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
@@ -18,22 +18,47 @@ Command Code에는 Claude Code식 `statusLine` 외부 명령 훅이 없습니다
 ## 설치
 
 ```bash
-cmd mods add holtwood/cmdc-statusline -g     # 사용자 범위 (-g를 빼면 프로젝트 범위)
+cmd mods add cmdc-statusline -g              # npm에서 (-g = 사용자 범위, 빼면 현재 프로젝트에만)
 cmd mods list                                # 목록에 나오면 정상
 ```
 
-패키지 관리 없이 파일만 넣어도 됩니다.
+같은 패키지를 git에서도 설치할 수 있습니다: `cmd mods add holtwood/cmdc-statusline -g`
+(레지스트리에 의존하고 싶지 않을 때).
+
+패키지 관리 없이 파일만 넣어도 됩니다 — `index.ts`를 `~/.commandcode/mods/statusline.ts`
+(Windows에서는 `%USERPROFILE%\.commandcode\mods\statusline.ts`)에 두고 새 세션을 열면 됩니다:
 
 ```bash
-mkdir -p ~/.commandcode/mods
-curl -o ~/.commandcode/mods/statusline.ts \
+mkdir -p ~/.commandcode/mods && curl -o ~/.commandcode/mods/statusline.ts \
   https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
 ```
 
-> Windows에서는 명령이 `cmdc`입니다(`cmd`는 Windows 셸) — `cmdc mods add …`로 바꿔 쓰세요.
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.commandcode\mods" | Out-Null
+Invoke-WebRequest -OutFile "$env:USERPROFILE\.commandcode\mods\statusline.ts" `
+  https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
+```
+
+설치 방식은 하나만 선택하세요: 패키지와 직접 배치는 서로 다른 mod이며 같은 flag 이름을 선언합니다.
+flag 이름은 mod 전체에서 전역으로 해석됩니다.
+
+> Windows에서는 명령이 `cmdc`입니다(`cmd`는 Windows 셸) — `cmdc mods add …`, `cmdc mods list`, `cmdc --mod .\index.ts`로 바꿔 쓰세요.
 
 설치 없이 시험: `cmd --mod ./index.ts`. mod는 프로세스당 한 번만 로드되므로 변경 후에는
 `/reload` 또는 새 세션이 필요합니다. 빌드 단계는 없습니다(Command Code가 로드 시 TypeScript를 컴파일).
+
+### AI 에이전트에게 맡기기
+
+직접 명령을 치고 싶지 않다면 아래를 에이전트(Claude Code, Codex, Command Code 등)에 붙여넣으세요:
+
+> Command Code mod `cmdc-statusline`을 사용자 범위로 설치해 주세요:
+> `cmd mods add cmdc-statusline -g`를 실행하고(Windows에서는 `cmd` 대신 `cmdc`; npm에서 찾지 못하면
+> `holtwood/cmdc-statusline` 사용), 그다음 `cmd mods list`에서 `cmdc-statusline`이 사용자 범위로
+> 표시되고 로드 경고가 없는지 확인해 주세요. 마지막으로 상태 표시줄이 그려지도록 세션 재시작을
+> 안내해 주세요.
+
+root 권한은 필요 없고, 기록되는 것은 `~/.commandcode/mods/`와 `~/.commandcode/settings.json`의
+`mods.sources`뿐입니다.
 
 ## 세그먼트
 
@@ -122,12 +147,13 @@ python3 scripts/gen-model-tables.py --check   # 표가 어긋나면 실패(CI에
 ## 개발
 
 ```bash
-node test/statusline.test.mjs     # 136개 단언, 의존성 없음, 빌드 없음
+node test/statusline.test.mjs     # 전체 스위트: 의존성 없음, 빌드 없음
 python3 scripts/gen-model-tables.py --check
 ```
 
 테스트는 `index.ts`를 직접 불러옵니다. Node 22.18+/24가 타입을 제거하므로 툴체인이 필요 없습니다.
-다른 사본을 시험하려면 `STATUSLINE_MOD=/path/to/statusline.ts`.
+다른 사본을 시험하려면 `STATUSLINE_MOD=/path/to/statusline.ts`. CI는 Linux, macOS, Windows에서 같은
+스위트를 실행합니다.
 
 ## 알려진 제한
 
@@ -137,6 +163,9 @@ python3 scripts/gen-model-tables.py --check
   `scripts/gen-model-tables.py`를 다시 실행해야 합니다(재개 시드와 요청별 계산 모두 제품 자체 수치와 대조 완료).
 - 세션 이름과 비용 복원은 `~/.commandcode/projects/**`(비공개 배치)를 읽습니다. 모두 폴백이 있어
   배치가 바뀌어도 "세그먼트가 사라질" 뿐 충돌하지 않습니다.
+- **거대한 저장소에서의 폴링.** 상태 표시줄은 `refresh`초마다(기본 10초) `git status`를 다시 읽습니다.
+  작은 저장소에서는 무시할 비용이지만 거대한 저장소에서는 아닙니다 — `refresh`를 올리거나 `0`으로
+  두고 이벤트 기반 갱신에 맡기세요.
 
 ## 유사 프로젝트
 

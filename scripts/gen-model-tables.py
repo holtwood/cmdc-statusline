@@ -26,28 +26,45 @@ PRICE = re.compile(
 )
 
 
+RELATIVE = "command-code/dist/bundled/command-code-knowledge/reference/models.md"
+
+
+def force_utf8_output() -> None:
+    """Windows 控制台/CI 管道的默认编码是 GBK/CP1252，直接输出 ✓ 会 UnicodeEncodeError。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def default_models_md() -> str:
     """定位 CLI 内置的模型清单：先问 npm 全局根，再扫常见全局安装路径。"""
-    relative = os.path.join(
-        "command-code", "dist", "bundled", "command-code-knowledge", "reference", "models.md"
-    )
     candidates: list[str] = []
     try:
         import subprocess
 
+        # Windows 上 npm 是 .cmd 垫片，不加 shell 无法直接执行（会抛 FileNotFoundError）
         root = subprocess.run(
-            ["npm", "root", "-g"], capture_output=True, text=True, timeout=20
+            ["npm", "root", "-g"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            shell=os.name == "nt",
         ).stdout.strip()
         if root:
-            candidates.append(os.path.join(root, relative))
+            candidates.append(os.path.join(root, *RELATIVE.split("/")))
     except Exception:
         pass
     candidates += [
-        os.path.expanduser(f"~/.nvm/versions/node/*/lib/node_modules/{relative}"),
-        f"/usr/local/lib/node_modules/{relative}",
-        f"/usr/lib/node_modules/{relative}",
-        os.path.expanduser(f"~/.npm-global/lib/node_modules/{relative}"),
+        os.path.expanduser(f"~/.nvm/versions/node/*/lib/node_modules/{RELATIVE}"),
+        f"/usr/local/lib/node_modules/{RELATIVE}",
+        f"/usr/lib/node_modules/{RELATIVE}",
+        os.path.expanduser(f"~/.npm-global/lib/node_modules/{RELATIVE}"),
     ]
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        candidates.append(os.path.join(appdata, "npm", "node_modules", *RELATIVE.split("/")))
     for pattern in candidates:
         matches = sorted(glob.glob(pattern))
         if matches:
@@ -131,6 +148,7 @@ def splice(source: str, name: str, block: str) -> str:
 
 
 def main() -> int:
+    force_utf8_output()
     parser = argparse.ArgumentParser()
     parser.add_argument("--models-md", default=default_models_md())
     parser.add_argument("--check", action="store_true", help="只校验，不写入")
