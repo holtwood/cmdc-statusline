@@ -122,7 +122,7 @@ python3 scripts/gen-model-tables.py --check   # 表がずれていれば失敗�
 ## 開発
 
 ```bash
-node test/statusline.test.mjs     # 127 アサーション、依存ゼロ・ビルド不要
+node test/statusline.test.mjs     # 136 アサーション、依存ゼロ・ビルド不要
 python3 scripts/gen-model-tables.py --check
 ```
 

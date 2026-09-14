@@ -125,7 +125,7 @@ Ein fehlendes Modell degradiert sauber: ohne Fenster kein Balken/Prozentwert, oh
 ## Entwicklung
 
 ```bash
-node test/statusline.test.mjs     # 127 Assertions, keine Abhängigkeiten, kein Build
+node test/statusline.test.mjs     # 136 Assertions, keine Abhängigkeiten, kein Build
 python3 scripts/gen-model-tables.py --check
 ```
 

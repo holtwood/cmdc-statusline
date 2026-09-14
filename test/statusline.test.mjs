@@ -116,6 +116,13 @@ check('formatRate 99.8 → 99%（不谎报 100）', formatRate(99.8), '99%');
 check('formatRate 87.3 → 87%', formatRate(87.3), '87%');
 check('formatRate 3.44 → 3.4%', formatRate(3.44), '3.4%');
 check('visibleLength ignores ansi', visibleLength('\u001b[31mabc\u001b[0m │ \u001b[2mde\u001b[0m'), 8);
+check('visibleLength counts CJK as two columns', visibleLength('提交'), 4);
+check('visibleLength mixed ascii + CJK', visibleLength('abc中文'), 7);
+check('visibleLength strips ansi around CJK', visibleLength('\u001b[1m中文\u001b[0m'), 4);
+check('truncateToWidth keeps short text', ns.truncateToWidth('abc', 5), 'abc');
+check('truncateToWidth ascii', ns.truncateToWidth('abcdef', 4), 'abc…');
+check('truncateToWidth CJK', ns.truncateToWidth('提交并推送', 5), '提交…');
+check('truncateToWidth CJK width is exact', visibleLength(ns.truncateToWidth('提交并推送', 5)), 5);
 
 {
 	const dir = mkdtempSync(join(tmpdir(), 'statusline-cfg-'));
@@ -260,6 +267,21 @@ check(
 	checkTrue('narrow 40: actually fits', visibleLength(narrow) <= 40, `${visibleLength(narrow)} → ${narrow}`);
 
 	check('tiny: model survives alone', composeLine(snapshot, allSegments, {...base, maxWidth: 8}), 'deepseek-v4.1-flash');
+
+	// 中文 session 名：宽度必须按显示列算，否则窄终端会算窄一半、该降级时不降级
+	const cjkSnapshot = {...snapshot, title: '提交并推送这些改动'};
+	const cjkLine = composeLine(cjkSnapshot, allSegments, {...base, maxWidth: 70});
+	checkTrue(
+		'CJK title: line fits display width',
+		visibleLength(cjkLine) <= 70,
+		`${visibleLength(cjkLine)} → ${cjkLine}`,
+	);
+	const cjkTight = composeLine(cjkSnapshot, allSegments, {...base, maxWidth: 30});
+	checkTrue(
+		'CJK title: tight width also fits',
+		visibleLength(cjkTight) <= 30,
+		`${visibleLength(cjkTight)} → ${cjkTight}`,
+	);
 
 	const onlyContext = {
 		model: false,

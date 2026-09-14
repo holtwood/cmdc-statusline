@@ -124,7 +124,7 @@ python3 scripts/gen-model-tables.py --check   # упадёт, если табл�
 ## Разработка
 
 ```bash
-node test/statusline.test.mjs     # 127 проверок, без зависимостей и сборки
+node test/statusline.test.mjs     # 136 проверок, без зависимостей и сборки
 python3 scripts/gen-model-tables.py --check
 ```
 

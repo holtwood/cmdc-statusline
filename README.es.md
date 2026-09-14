@@ -125,7 +125,7 @@ Un modelo ausente degrada con elegancia: sin ventana no hay barra ni porcentaje,
 ## Desarrollo
 
 ```bash
-node test/statusline.test.mjs     # 127 aserciones, sin dependencias ni compilación
+node test/statusline.test.mjs     # 136 aserciones, sin dependencias ni compilación
 python3 scripts/gen-model-tables.py --check
 ```
 

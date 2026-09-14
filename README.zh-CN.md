@@ -119,7 +119,7 @@ python3 scripts/gen-model-tables.py --check   # 表已漂移则失败（CI 会�
 ## 开发
 
 ```bash
-node test/statusline.test.mjs     # 127 项断言，零依赖、无需构建
+node test/statusline.test.mjs     # 136 项断言，零依赖、无需构建
 python3 scripts/gen-model-tables.py --check
 ```
 

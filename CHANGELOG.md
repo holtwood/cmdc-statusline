@@ -2,6 +2,11 @@
 
 ## 0.4.0
 
+- Narrow terminals measure **display width**, not characters: CJK/emoji session names count as
+  two columns, and long titles are truncated by column — the line no longer overflows on a
+  narrow pane when the session name is not ASCII.
+- Known limitation: sub-agent tokens are per-process (the product persists them nowhere), so
+  `sub` starts at zero on resume while `cost` is restored from the transcript.
 - Narrow terminals: segments are dropped by priority and the line re-renders on resize,
   instead of clipping. The model is never dropped.
 - New `cache` segment — prompt-cache hit rate of the last request.

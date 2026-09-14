@@ -126,7 +126,7 @@ pas de coût.
 ## Développement
 
 ```bash
-node test/statusline.test.mjs     # 127 assertions, sans dépendance ni build
+node test/statusline.test.mjs     # 136 assertions, sans dépendance ni build
 python3 scripts/gen-model-tables.py --check
 ```
 

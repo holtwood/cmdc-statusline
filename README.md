@@ -124,7 +124,7 @@ no cost without a price.
 ## Development
 
 ```bash
-node test/statusline.test.mjs     # 127 assertions, no dependencies, no build
+node test/statusline.test.mjs     # 136 assertions, no dependencies, no build
 python3 scripts/gen-model-tables.py --check
 ```
 

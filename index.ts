@@ -112,7 +112,7 @@ type Config = Record<string, unknown>;
 
 const SEP = ' │ ';
 const GIT_TTL_MS = 5000;
-const TITLE_MAX = 24;
+const TITLE_COLUMNS = 24;
 const COST_WARN_USD = 1;
 const COST_ALERT_USD = 10;
 const ANSI_PATTERN = /\u001b\[[0-9;]*m/g;
@@ -412,8 +412,29 @@ export function renderBar(
 	return cells.join('');
 }
 
+// 终端显示宽度：ANSI 不计宽；CJK / 全角 / 常见 emoji 占 2 列（按字符数算会让中文标题算窄一半）
+const WIDE_CHAR =
+	/[\u{1100}-\u{115F}\u{2E80}-\u{303E}\u{3041}-\u{33FF}\u{3400}-\u{4DBF}\u{4E00}-\u{9FFF}\u{A000}-\u{A4CF}\u{AC00}-\u{D7A3}\u{F900}-\u{FAFF}\u{FE30}-\u{FE6F}\u{FF00}-\u{FF60}\u{FFE0}-\u{FFE6}\u{1F300}-\u{1F64F}\u{1F900}-\u{1F9FF}\u{20000}-\u{3FFFD}]/u;
+
 export function visibleLength(text: string): number {
-	return text.replace(ANSI_PATTERN, '').length;
+	let width = 0;
+	for (const char of text.replace(ANSI_PATTERN, '')) {
+		width += WIDE_CHAR.test(char) ? 2 : 1;
+	}
+	return width;
+}
+
+export function truncateToWidth(text: string, max: number): string {
+	if (visibleLength(text) <= max) return text;
+	let width = 0;
+	let out = '';
+	for (const char of text) {
+		const next = width + (WIDE_CHAR.test(char) ? 2 : 1);
+		if (next > max - 1) break;
+		width = next;
+		out += char;
+	}
+	return `${out}…`;
 }
 
 export function parseGitStatus(porcelain: string, isRepo = true): GitInfo {
@@ -517,11 +538,7 @@ export function composeLine(
 		push('sub', [paint(ANSI.gray, `sub ${formatTokens(snapshot.subTokens)}`)]);
 	}
 	if (segments.name && snapshot.title) {
-		const title =
-			snapshot.title.length > TITLE_MAX
-				? `${snapshot.title.slice(0, TITLE_MAX - 1)}…`
-				: snapshot.title;
-		push('name', [paint(ANSI.bold, title)]);
+		push('name', [paint(ANSI.bold, truncateToWidth(snapshot.title, TITLE_COLUMNS))]);
 	}
 	if (segments.git && snapshot.isRepo && snapshot.branch) {
 		let branch = paint(ANSI.magenta, snapshot.branch);

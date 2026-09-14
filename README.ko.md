@@ -120,7 +120,7 @@ python3 scripts/gen-model-tables.py --check   # 표가 어긋나면 실패(CI에
 ## 개발
 
 ```bash
-node test/statusline.test.mjs     # 127개 단언, 의존성 없음, 빌드 없음
+node test/statusline.test.mjs     # 136개 단언, 의존성 없음, 빌드 없음
 python3 scripts/gen-model-tables.py --check
 ```
 
