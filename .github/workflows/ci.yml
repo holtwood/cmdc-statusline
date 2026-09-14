@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test — imports index.ts directly (native type stripping, no build)
+        run: node test/statusline.test.mjs
+
+  catalogue:
+    # 建议性检查：把内置表与最新 CLI 的模型清单比对。上游改价/改窗口会让这一步失败，
+    # 提示维护者重跑 scripts/gen-model-tables.py —— 因此不阻塞 PR。
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm i -g command-code
+      - name: Generated tables match the installed catalogue
+        run: python3 scripts/gen-model-tables.py --check
