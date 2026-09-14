@@ -9,7 +9,7 @@ contexto con degradado, tasa de aciertos de caché, coste de la sesión, velocid
 uso de subagentes, nombre de sesión y estado de git, todo en la línea bajo el panel de entrada.
 
 ```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ dev-home
+deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
 ```
 
 Command Code no tiene un hook externo `statusLine` como Claude Code: `cmd.ui.setStatus()` (la API
@@ -49,7 +49,7 @@ TypeScript al cargarlo.
 | `Simple Reply` | Nombre de la sesión (sobrevive a `/reload` y a reanudar) |
 | `main ↑1` | Rama de git con ahead/behind |
 | `+1 ~2 ?1` | preparado · modificado · sin seguimiento (muestra `clean` si está limpio) |
-| `dev-home` | Nombre del directorio actual |
+| `my-project` | Nombre del directorio actual |
 
 ## Configuración
 

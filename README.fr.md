@@ -9,7 +9,7 @@ contexte en dégradé, taux de succès du cache, coût de la session, vitesse de
 sous-agents, nom de session et état git, le tout sur la ligne sous la zone de saisie.
 
 ```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ dev-home
+deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
 ```
 
 Command Code n'a pas de hook externe `statusLine` comme Claude Code : `cmd.ui.setStatus()` (l'API
@@ -49,7 +49,7 @@ Command Code compile le TypeScript au chargement.
 | `Simple Reply` | Nom de session (survit à `/reload` et à la reprise) |
 | `main ↑1` | Branche git avec ahead/behind |
 | `+1 ~2 ?1` | indexé · modifié · non suivi (`clean` si propre) |
-| `dev-home` | Nom du répertoire courant |
+| `my-project` | Nom du répertoire courant |
 
 ## Configuration
 

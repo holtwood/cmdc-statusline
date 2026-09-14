@@ -9,7 +9,7 @@
 git の状態を、入力欄の下の 1 行にまとめて表示します。
 
 ```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ dev-home
+deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
 ```
 
 Command Code には Claude Code のような `statusLine` 外部コマンドフックがありません。入力欄の下に
@@ -48,7 +48,7 @@ curl -o ~/.commandcode/mods/statusline.ts \
 | `Simple Reply` | セッション名（`/reload` や再開後も保持） |
 | `main ↑1` | git ブランチと ahead/behind |
 | `+1 ~2 ?1` | ステージ済み · 変更 · 未追跡（クリーンなら `clean`） |
-| `dev-home` | 現在のディレクトリ名 |
+| `my-project` | 現在のディレクトリ名 |
 
 ## 設定
 

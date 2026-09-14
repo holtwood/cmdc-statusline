@@ -8,6 +8,8 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 const MOD_PATH =
 	process.env.STATUSLINE_MOD ?? fileURLToPath(new URL('../index.ts', import.meta.url));
 
+const FIXTURE_CWD = '/tmp/statusline-fixture/my-project';
+
 let passed = 0;
 const failures = [];
 
@@ -166,8 +168,8 @@ const plain = (segments, extra = {}) =>
 
 check(
 	'compose full line',
-	plain(allSegments, {cwd: 'dev-home'}),
-	'deepseek-v4.1-flash │ max │ #----------- 28k (2.8%) │ $0.012 │ 42 tok/s │ Commit And Push │ main ↑1 │ +1 ~2 ?1 │ dev-home',
+	plain(allSegments, {cwd: 'my-project'}),
+	'deepseek-v4.1-flash │ max │ #----------- 28k (2.8%) │ $0.012 │ 42 tok/s │ Commit And Push │ main ↑1 │ +1 ~2 ?1 │ my-project',
 );
 check(
 	'compose bar off keeps ctx prefix',
@@ -237,7 +239,7 @@ check(
 
 // 窄终端：按优先级降级——模型永不丢，上下文逐级退化（条+token+% → token+% → token）
 {
-	const base = {color: false, rawModel: false, mode: 'ascii', barWidth: 12, cwd: 'dev-home'};
+	const base = {color: false, rawModel: false, mode: 'ascii', barWidth: 12, cwd: 'my-project'};
 	const full = composeLine(snapshot, allSegments, {...base, maxWidth: 0});
 	const fullWidth = visibleLength(full);
 	checkTrue('no maxWidth → no dropping', fullWidth > 60, `${fullWidth}`);
@@ -245,14 +247,14 @@ check(
 	check('width == line length → unchanged', composeLine(snapshot, allSegments, {...base, maxWidth: fullWidth}), full);
 	checkTrue(
 		'narrow: cwd dropped first',
-		!composeLine(snapshot, allSegments, {...base, maxWidth: fullWidth - 1}).includes('dev-home'),
+		!composeLine(snapshot, allSegments, {...base, maxWidth: fullWidth - 1}).includes('my-project'),
 	);
 
 	const narrow = composeLine(snapshot, allSegments, {...base, maxWidth: 40});
 	checkTrue('narrow 40: model survives', narrow.includes('deepseek-v4.1-flash'), narrow);
 	checkTrue(
 		'narrow 40: drops cwd/speed/cache',
-		!narrow.includes('dev-home') && !narrow.includes('tok/s') && !narrow.includes('cache'),
+		!narrow.includes('my-project') && !narrow.includes('tok/s') && !narrow.includes('cache'),
 		narrow,
 	);
 	checkTrue('narrow 40: actually fits', visibleLength(narrow) <= 40, `${visibleLength(narrow)} → ${narrow}`);
@@ -282,7 +284,7 @@ check(
 }
 
 // ── runtime against a stub ModApi ───────────────────────────────────────────────────
-function makeStub({statusCapability = true, gitCode = 0, gitStdout = porcelain, env = {}, cwd = '/home/shane/github/holtwood/dev-home'} = {}) {
+function makeStub({statusCapability = true, gitCode = 0, gitStdout = porcelain, env = {}, cwd = FIXTURE_CWD} = {}) {
 	const saved = {};
 	for (const [key, value] of Object.entries(env)) {
 		saved[key] = process.env[key];
@@ -337,7 +339,7 @@ const useBaselineUsage = async (state, model = 'deepseek/deepseek-v4.1-flash') =
 
 const realHome = process.env.HOME;
 const fakeHome = mkdtempSync(join(tmpdir(), 'statusline-home-'));
-const slug = 'home-shane-github-holtwood-dev-home';
+const slug = FIXTURE_CWD.replace(/^[/\\]+/, '').replace(/[/\\:]+/g, '-');
 const seededSession = 'seeded-session-id';
 const projectDir = join(fakeHome, '.commandcode', 'projects', slug);
 mkdirSync(projectDir, {recursive: true});
@@ -356,12 +358,12 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	state.flags.set('refresh', '0');
 	state.hooks.onSessionStart({source: 'startup', sessionId: 'fresh-session-id'});
 	await settle();
-	check('session start paints git + cwd only', strip(state.statuses.at(-1)), 'main ↑1↓2 │ +1 ~1 ?1 │ dev-home');
-	checkTrue('cwd on by default', strip(state.statuses.at(-1)).endsWith('dev-home'), strip(state.statuses.at(-1)));
+	check('session start paints git + cwd only', strip(state.statuses.at(-1)), 'main ↑1↓2 │ +1 ~1 ?1 │ my-project');
+	checkTrue('cwd on by default', strip(state.statuses.at(-1)).endsWith('my-project'), strip(state.statuses.at(-1)));
 
 	state.events.session_titled[0]({type: 'session_titled', title: 'Auto Generated Title'});
 	await settle();
-	check('session_titled adds name', strip(state.statuses.at(-1)), 'Auto Generated Title │ main ↑1↓2 │ +1 ~1 ?1 │ dev-home');
+	check('session_titled adds name', strip(state.statuses.at(-1)), 'Auto Generated Title │ main ↑1↓2 │ +1 ~1 ?1 │ my-project');
 
 	await useBaselineUsage(state);
 	await settle();
@@ -408,7 +410,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	state.flags.set('refresh', '0');
 	state.hooks.onSessionStart({source: 'resume', sessionId: seededSession});
 	await settle();
-	check('resume seeds title from meta.json', strip(state.statuses.at(-1)), 'Seeded Session Name │ main ↑1↓2 │ +1 ~1 ?1 │ dev-home');
+	check('resume seeds title from meta.json', strip(state.statuses.at(-1)), 'Seeded Session Name │ main ↑1↓2 │ +1 ~1 ?1 │ my-project');
 	process.env.HOME = realHome;
 }
 
@@ -425,8 +427,8 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 			'',
 		].join('\n'),
 	);
-	checkClose('readSessionCost sums transcript', await readSessionCost(costSession, '/home/shane/github/holtwood/dev-home'), 0.35, 1e-9);
-	check('readSessionCost missing file', await readSessionCost('no-such-session', '/home/shane/github/holtwood/dev-home'), undefined);
+	checkClose('readSessionCost sums transcript', await readSessionCost(costSession, FIXTURE_CWD), 0.35, 1e-9);
+	check('readSessionCost missing file', await readSessionCost('no-such-session', FIXTURE_CWD), undefined);
 
 	const {api, state} = makeStub();
 	ns.default(api);
@@ -452,7 +454,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	state.flags.set('refresh', '0');
 	state.hooks.onSessionStart({source: 'resume', sessionId: 'broken-session-id'});
 	await settle();
-	check('corrupt meta.json is ignored', strip(state.statuses.at(-1)), 'main ↑1↓2 │ +1 ~1 ?1 │ dev-home');
+	check('corrupt meta.json is ignored', strip(state.statuses.at(-1)), 'main ↑1↓2 │ +1 ~1 ?1 │ my-project');
 	process.env.HOME = realHome;
 }
 

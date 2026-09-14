@@ -9,7 +9,7 @@
 모두 표시합니다.
 
 ```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ dev-home
+deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
 ```
 
 Command Code에는 Claude Code식 `statusLine` 외부 명령 훅이 없습니다. 입력창 아래에 상시 줄을
@@ -47,7 +47,7 @@ curl -o ~/.commandcode/mods/statusline.ts \
 | `Simple Reply` | 세션 이름(`/reload`와 재개 후에도 유지) |
 | `main ↑1` | git 브랜치와 ahead/behind |
 | `+1 ~2 ?1` | 스테이지 · 수정 · 추적 안 됨(깨끗하면 `clean`) |
-| `dev-home` | 현재 디렉터리 이름 |
+| `my-project` | 현재 디렉터리 이름 |
 
 ## 설정
 

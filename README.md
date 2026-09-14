@@ -7,7 +7,7 @@ context bar, cache hit rate, session cost, output speed, sub-agent usage, sessio
 git state, all on the row under the input panel.
 
 ```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ dev-home
+deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
 ```
 
 Command Code has no Claude Code-style `statusLine` command hook — `cmd.ui.setStatus()` (the
@@ -47,7 +47,7 @@ the TypeScript at load.
 | `Simple Reply` | Session name (survives `/reload` and resume) |
 | `main ↑1` | Git branch with ahead/behind |
 | `+1 ~2 ?1` | staged · modified · untracked (drops to `clean`) |
-| `dev-home` | Current directory basename |
+| `my-project` | Current directory basename |
 
 ## Configuration
 

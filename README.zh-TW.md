@@ -8,7 +8,7 @@
 工作階段花費、輸出速度、子代理用量、工作階段名稱與 git 狀態，全部顯示在輸入框下方那一行。
 
 ```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ dev-home
+deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
 ```
 
 Command Code 沒有 Claude Code 那種 `statusLine` 外部指令掛鉤——`cmd.ui.setStatus()`（mod 介面）
@@ -46,7 +46,7 @@ curl -o ~/.commandcode/mods/statusline.ts \
 | `Simple Reply` | 工作階段名稱（`/reload` 與恢復後仍在） |
 | `main ↑1` | git 分支與 ahead/behind |
 | `+1 ~2 ?1` | 已暫存 · 已修改 · 未追蹤（乾淨時顯示 `clean`） |
-| `dev-home` | 目前目錄名稱 |
+| `my-project` | 目前目錄名稱 |
 
 ## 設定
 

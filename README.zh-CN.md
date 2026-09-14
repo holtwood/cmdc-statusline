@@ -8,7 +8,7 @@
 会话花费、输出速度、子代理用量、session 名与 git 状态，全部渲染在输入框下方的那一行。
 
 ```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ dev-home
+deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
 ```
 
 Command Code 没有 Claude Code 式的 `statusLine` 外部命令钩子——`cmd.ui.setStatus()`（mod 接口）
@@ -46,7 +46,7 @@ Command Code 在加载时直接编译 TypeScript。
 | `Simple Reply` | session 名（`/reload` 与恢复会话后仍在） |
 | `main ↑1` | git 分支与 ahead/behind |
 | `+1 ~2 ?1` | 已暂存 · 已修改 · 未跟踪（干净时显示 `clean`） |
-| `dev-home` | 当前目录名 |
+| `my-project` | 当前目录名 |
 
 ## 配置
 

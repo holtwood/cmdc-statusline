@@ -9,7 +9,7 @@
 сессии и состояние git — всё в строке под полем ввода.
 
 ```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ dev-home
+deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
 ```
 
 В Command Code нет внешнего хука `statusLine`, как в Claude Code: `cmd.ui.setStatus()` (API модов) —
@@ -48,7 +48,7 @@ curl -o ~/.commandcode/mods/statusline.ts \
 | `Simple Reply` | Имя сессии (сохраняется после `/reload` и возобновления) |
 | `main ↑1` | Ветка git с ahead/behind |
 | `+1 ~2 ?1` | в индексе · изменено · не отслеживается (`clean`, если чисто) |
-| `dev-home` | Имя текущего каталога |
+| `my-project` | Имя текущего каталога |
 
 ## Настройка
 

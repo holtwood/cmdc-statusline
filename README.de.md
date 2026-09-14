@@ -9,7 +9,7 @@ Farbverlauf, Cache-Trefferquote, Sitzungskosten, Ausgabegeschwindigkeit, Subagen
 Sitzungsname und Git-Status — alles in der Zeile unter dem Eingabefeld.
 
 ```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ dev-home
+deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
 ```
 
 Command Code hat keinen externen `statusLine`-Hook wie Claude Code: `cmd.ui.setStatus()` (die
@@ -49,7 +49,7 @@ TypeScript beim Laden.
 | `Simple Reply` | Sitzungsname (übersteht `/reload` und Fortsetzen) |
 | `main ↑1` | Git-Branch mit ahead/behind |
 | `+1 ~2 ?1` | bereitgestellt · geändert · unverfolgt (`clean`, wenn sauber) |
-| `dev-home` | Name des aktuellen Verzeichnisses |
+| `my-project` | Name des aktuellen Verzeichnisses |
 
 ## Konfiguration
 
