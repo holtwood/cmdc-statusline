@@ -31,6 +31,8 @@ curl -o ~/.commandcode/mods/statusline.ts \
   https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
 ```
 
+> En Windows el binario es `cmdc` (`cmd` abre el shell de Windows): usa `cmdc mods add …`, `cmdc mods list`, etc.
+
 Pruébalo sin instalar: `cmd --mod ./index.ts`. Los mods se cargan una vez por proceso: usa `/reload`
 o abre una sesión nueva tras un cambio. No hay paso de compilación: Command Code compila el
 TypeScript al cargarlo.

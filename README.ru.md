@@ -30,6 +30,8 @@ curl -o ~/.commandcode/mods/statusline.ts \
   https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
 ```
 
+> В Windows бинарник называется `cmdc` (`cmd` открывает оболочку Windows) — используйте `cmdc mods add …`, `cmdc mods list` и т. д.
+
 Попробовать без установки: `cmd --mod ./index.ts`. Моды загружаются один раз на процесс — после
 правок нужен `/reload` или новая сессия. Шага сборки нет: Command Code компилирует TypeScript
 при загрузке.

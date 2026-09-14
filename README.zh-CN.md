@@ -29,6 +29,8 @@ curl -o ~/.commandcode/mods/statusline.ts \
   https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
 ```
 
+> Windows 上命令是 `cmdc`（`cmd` 是系统 shell）——即 `cmdc mods add …`、`cmdc mods list`。
+
 免安装试跑：`cmd --mod ./index.ts`。mod 每进程只加载一次——改完用 `/reload` 或新开会话。无需构建步骤：
 Command Code 在加载时直接编译 TypeScript。
 

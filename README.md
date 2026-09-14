@@ -29,6 +29,8 @@ curl -o ~/.commandcode/mods/statusline.ts \
   https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
 ```
 
+> On Windows the binary is `cmdc` (bare `cmd` opens the Windows shell) — run `cmdc mods add …`, `cmdc mods list`, and so on.
+
 Try it without installing: `cmd --mod ./index.ts`. Mods load once per process — use
 `/reload` or start a new session to pick up a change. No build step: Command Code compiles
 the TypeScript at load.
@@ -142,6 +144,10 @@ Point them at another copy with `STATUSLINE_MOD=/path/to/statusline.ts`.
 - The session name and cost restore read `~/.commandcode/projects/**` — an undocumented
   layout. Everything is wrapped so a layout change degrades to "segment missing", never a
   crash.
+
+- **Polling on huge repositories.** The footer re-reads `git status` every `refresh`
+  seconds (default 10). That call is free in small repos but not in enormous ones — raise
+  `refresh` or set it to `0` and let the event-driven refreshes do the work.
 
 ## Prior art
 

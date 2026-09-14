@@ -4,9 +4,18 @@
 	"description": "A status line mod for Command Code (cmdc): model, gradient context bar, cache hit rate, session cost, output speed, sub-agent usage, session name and git state.",
 	"type": "module",
 	"commandcode": {
-		"mods": ["./index.ts"]
+		"mods": [
+			"./index.ts"
+		]
 	},
-	"files": ["index.ts", "scripts", "README.md", "LICENSE"],
+	"files": [
+		"index.ts",
+		"scripts",
+		"test",
+		"README*.md",
+		"LICENSE",
+		"CHANGELOG.md"
+	],
 	"scripts": {
 		"test": "node test/statusline.test.mjs",
 		"tables:check": "python3 scripts/gen-model-tables.py --check",

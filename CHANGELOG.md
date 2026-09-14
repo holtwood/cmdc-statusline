@@ -2,6 +2,11 @@
 
 ## 0.4.0
 
+- Packaging: `package.json#files` now covers the translated READMEs, `test/` and
+  `CHANGELOG.md`, so an npm publish would ship the whole project. READMEs note that the
+  binary is `cmdc` on Windows, and the English one documents the `refresh` trade-off on
+  very large repositories.
+
 - Narrow terminals measure **display width**, not characters: CJK/emoji session names count as
   two columns, and long titles are truncated by column — the line no longer overflows on a
   narrow pane when the session name is not ASCII.

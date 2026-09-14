@@ -30,6 +30,8 @@ curl -o ~/.commandcode/mods/statusline.ts \
   https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
 ```
 
+> Windows에서는 명령이 `cmdc`입니다(`cmd`는 Windows 셸) — `cmdc mods add …`로 바꿔 쓰세요.
+
 설치 없이 시험: `cmd --mod ./index.ts`. mod는 프로세스당 한 번만 로드되므로 변경 후에는
 `/reload` 또는 새 세션이 필요합니다. 빌드 단계는 없습니다(Command Code가 로드 시 TypeScript를 컴파일).
 

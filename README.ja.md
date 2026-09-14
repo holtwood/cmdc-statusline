@@ -30,6 +30,8 @@ curl -o ~/.commandcode/mods/statusline.ts \
   https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
 ```
 
+> Windows ではコマンドは `cmdc` です（`cmd` は Windows のシェル）——`cmdc mods add …` と読み替えてください。
+
 インストールせずに試す: `cmd --mod ./index.ts`。mod は 1 プロセスにつき 1 回だけ読み込まれます。
 変更後は `/reload` か新しいセッションで反映してください。ビルド手順は不要です（Command Code が
 読み込み時に TypeScript をコンパイルします）。
