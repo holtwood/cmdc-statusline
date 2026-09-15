@@ -15,6 +15,14 @@ deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) 
 Command Code 没有 Claude Code 式的 `statusLine` 外部命令钩子——`cmd.ui.setStatus()`（mod 接口）
 是唯一能在输入框下方渲染常驻行的方式，本 mod 就建立在它之上。
 
+## 运行要求
+
+**需要 Command Code ≥ 1.10.0**（`cmd`，Windows 上是 `cmdc`）。**旧版本不支持**：检测到旧宿主时本 mod
+什么都不做——不注册任何东西、不画底栏，只在消息区留一条升级提示，然后自己停用。跑 `cmdc update`
+后重开会话即可。这个下限不是猜的：1.10.0 之前 mod 接口上还没有 `cmd.ui.capabilities`（逐个比对过
+npm 上每个 1.x 版本发布的包），mod 因此无法判断宿主到底渲不渲染底栏——它只会直接抛错，而不是降级。
+`/statusline` 的报告里会打印它识别到的宿主版本，方便你对照。
+
 ## 安装
 
 ```bash
@@ -96,6 +104,17 @@ Command Code 在加载时直接编译 TypeScript。
 }
 ```
 
+`preset` 给一组现成的段位，省得你一个个列键：
+
+| `preset` | 打开的段位 |
+|---|---|
+| `full`（默认） | 全部 |
+| `minimal` | `model` `effort` `context` `bar` `percent` `git` |
+| `usage` | `context` `bar` `percent` `cache` `cost` `sub` |
+
+预设只决定「哪些段位开」。写在它旁边的键会覆盖它（`{"preset": "minimal", "cost": true}` 仍会显示花费），
+渲染开关（`ascii`、`raw-model`）与它无关。预设名不认识会被点名，并按 `full` 处理。
+
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `model`、`effort`、`context` | `true` | 模型 / 推理强度 / 上次请求的上下文 |
@@ -107,9 +126,26 @@ Command Code 在加载时直接编译 TypeScript。
 | `name` | `true` | session 名（超过 24 字截断） |
 | `git` | `true` | 分支 + 改动数 |
 | `cwd` | `true` | 目录名 |
+| `preset` | `full` | `full` / `minimal` / `usage` |
 | `raw-model` | `false` | 模型 id 保留 vendor 前缀 |
 | `ascii` | `false` | 强制纯 ASCII 渲染 |
 | `refresh` | `10` | 重新读取 git 的间隔秒数（0 = 关闭定时器） |
+
+### 看见真正生效的是什么
+
+`/statusline` 会打印渲染出的那一行、它背后的原始数值，以及每个键的「键 / 默认 / 生效 / 来源」全表；
+再列出读到的配置文件，并把每一条用不了的东西单独点名：不认识的键（通常是拼错）、形状不对的取值、
+认不出的预设。被拒的取值会回退到默认并说明原因，而不是半生效、让你猜为什么改了没用。
+
+### 不改 JSON 也能改
+
+`/statusline config` 用 Command Code 的对话框（`cmd.ui.select` / `input` / `confirm`）做同一件事：
+选作用域（用户级 / 项目级）→ 选键 → 选值 → 确认。它只重写那一个键，文件里其余内容（包括本 mod
+不认识的键）原样保留，然后重新读取并**立刻重绘**底栏，不用 `/reload`。没有对话框桥接的运行
+（headless）只打印报告、不写文件；确认时选“否”同样不写。要是写进去的值被更高优先级的东西（项目级文件、
+`--mod-option`）压住、底栏根本不会变，流程会直接说出来，而不是让你拿着一个「提示已写入、界面毫无变化」发呆。
+
+（`/statusline` 自身的输出文字是中文。）
 
 **优先级说明：** Command Code 会把 `--mod-option` 的**值**从 mod 能看到的 argv 里抹掉，
 因此只有当取值**与内置默认不同**时才判定为显式覆盖。显式传默认值（如 `--mod-option cwd=true`）
@@ -117,6 +153,11 @@ Command Code 在加载时直接编译 TypeScript。
 
 ## 渲染
 
+- **启动时。** 绝大多数段位描述的是**上一次模型请求**，刚开的会话还没有——所以底栏先把当下能确定的
+  画出来，而不是干等第一次 `model_request_end`：模型与推理强度取自 `~/.commandcode/config.json`，
+  加上 session 名、git 状态与目录名。**恢复**会话还会从 transcript 还原上一轮请求的模型、effort、
+  上下文、缓存命中与花费，于是打开就是上次离开时的完整一行。真正要等到请求发生过的只有输出速度与
+  子代理 token（产品两者都不持久化）。
 - `COLORTERM=truecolor|24bit` → 24-bit 真彩渐变条；否则用 256 色近似；
   `ascii=true` 或 `TERM=dumb` → `#`/`-`；`NO_COLOR` 保留块字符但去色。
 - **窄终端不截断**：按优先级丢段位（`cwd` → 速度 → effort → 子代理 → 缓存 → session 名 →
@@ -127,7 +168,7 @@ Command Code 在加载时直接编译 TypeScript。
 
 | 值 | 来源 | 可信度 |
 |---|---|---|
-| 模型 / effort / 上下文 / 缓存 | `model_request_start` / `model_request_end` 事件载荷 | 精确 |
+| 模型 / effort / 上下文 / 缓存 | `model_request_start` / `model_request_end` 事件载荷（首次请求前 model/effort 取自 `~/.commandcode/config.json`，恢复时取自 transcript） | 请求跑过后精确；种子值即产品自己的值 |
 | 会话花费 | 恢复时读 `<sessionId>.jsonl` 的 `costUsd` + 每次请求按内置单价表计算 | 恢复部分是产品自己的数字；新增部分逐条复现产品口径（已对录入的 `costUsd` 全量核对） |
 | 子代理 token | `subagent_stop` 事件 | token 精确；子代理花费**不**计入花费段（产品自身也不落盘） |
 | session 名 | `session_titled` 事件 + 启动时读 `<sessionId>.meta.json` | 尽力而为——该文件布局未文档化，读取包在 `try` 里 |
@@ -159,7 +200,8 @@ python3 scripts/gen-model-tables.py --check
   本 mod 刻意只读本地（不联网、不碰 `auth.json`）。
 - 新请求的花费是**按随包价格表算的**，不是从 transcript 读回来的，所以价格变动需要重跑
   `scripts/gen-model-tables.py`（恢复种子与每次请求的算法都已对过产品自己的数字）。
-- session 名与花费恢复需要读 `~/.commandcode/projects/**` —— 未文档化的布局。所有读取都做了兜底：
+- session 名、花费恢复需要读 `~/.commandcode/projects/**`，启动时的模型/effort 种子要读
+  `~/.commandcode/config.json` —— 都是未文档化的布局。所有读取都做了兜底：
   布局变了只会「少一个段位」，不会崩。
 - **超大仓库里的轮询。** 底栏每 `refresh` 秒重读一次 `git status`（默认 10 秒）。这次调用在小仓库里
   是白送的，超大仓库不是——把 `refresh` 调大或设为 `0`，交给事件驱动的刷新。

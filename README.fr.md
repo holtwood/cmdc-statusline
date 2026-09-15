@@ -16,6 +16,16 @@ Command Code n'a pas de hook externe `statusLine` comme Claude Code : `cmd.ui.se
 des mods) est le seul moyen d'afficher une ligne permanente sous la zone de saisie, et c'est ce que
 fait ce mod.
 
+## Prérequis
+
+**Command Code ≥ 1.10.0** (`cmd`, ou `cmdc` sous Windows). Les versions anciennes **ne sont pas
+prises en charge** : face à un hôte ancien le mod ne fait rien du tout — il n'enregistre rien, ne
+dessine pas la ligne et laisse un unique avis de mise à jour dans le fil avant de se désactiver.
+Lancez `cmdc update` puis rouvrez une session. Ce minimum n'est pas une supposition : avant 1.10.0
+l'API des mods n'a pas de `cmd.ui.capabilities` (vérifié sur tous les paquets 1.x publiés), le mod ne
+peut donc même pas savoir si l'hôte dessine une ligne — il lèverait une exception au lieu de se
+dégrader. Le rapport de `/statusline` affiche la version de l'hôte détectée.
+
 ## Installation
 
 ```bash
@@ -103,6 +113,18 @@ La configuration est en JSON ; la ligne de commande peut la surcharger ponctuell
 }
 ```
 
+`preset` choisit un jeu de segments tout prêt, pour ne pas avoir à lister une douzaine de clés :
+
+| `preset` | Activés |
+|---|---|
+| `full` (défaut) | tous |
+| `minimal` | `model` `effort` `context` `bar` `percent` `git` |
+| `usage` | `context` `bar` `percent` `cache` `cost` `sub` |
+
+Un preset décide seulement *quels segments sont affichés*. Une clé écrite à côté le remplace
+(`{"preset": "minimal", "cost": true}` garde le coût), et les interrupteurs de rendu (`ascii`,
+`raw-model`) en sont indépendants. Un preset inconnu est signalé et traité comme `full`.
+
 | Clé | Défaut | Remarques |
 |---|---|---|
 | `model`, `effort`, `context` | `true` | modèle / effort / contexte de la dernière requête |
@@ -114,9 +136,31 @@ La configuration est en JSON ; la ligne de commande peut la surcharger ponctuell
 | `name` | `true` | nom de session (tronqué à 24 caractères) |
 | `git` | `true` | branche + nombre de changements |
 | `cwd` | `true` | nom du répertoire |
+| `preset` | `full` | `full` / `minimal` / `usage` |
 | `raw-model` | `false` | garde le préfixe fournisseur |
 | `ascii` | `false` | force le rendu ASCII |
 | `refresh` | `10` | secondes entre deux lectures de git (0 = pas de minuteur) |
+
+### Voir ce qui est réellement appliqué
+
+`/statusline` affiche la ligne rendue, les valeurs brutes derrière elle et un tableau
+`clé / défaut / effectif / origine` pour chaque clé, plus les fichiers lus et une ligne pour tout ce
+qu'il n'a pas pu utiliser : une clé inconnue (souvent une faute de frappe), une valeur de la mauvaise
+forme, un preset non reconnu. Les valeurs refusées reviennent au défaut et le disent, au lieu de
+s'appliquer à moitié : vous ne restez pas à deviner pourquoi un changement n'a rien fait.
+
+### Le changer sans éditer le JSON à la main
+
+`/statusline config` fait la même chose via les boîtes de dialogue de Command Code (`cmd.ui.select` /
+`input` / `confirm`) : portée (utilisateur ou projet), clé, valeur, confirmation. Il ne réécrit que
+cette clé — le reste du fichier, y compris les clés que ce mod ne connaît pas, est préservé — puis
+relit la configuration et **redessine la ligne immédiatement** : plus d'aller-retour par `/reload`.
+Une exécution sans boîtes de dialogue (headless) affiche le rapport et n'écrit rien ; refuser la
+confirmation n'écrit rien non plus. Si une source plus prioritaire (le fichier du projet,
+`--mod-option`) conserve l'ancienne valeur, le flux le dit — plutôt que de vous laisser avec une
+écriture qui, visiblement, n'a rien changé.
+
+(Les messages de `/statusline` lui-même sont en chinois.)
 
 **Précédence :** Command Code supprime les **valeurs** de `--mod-option` de l'argv visible par un mod.
 Un flag n'est donc considéré comme une surcharge explicite que si sa valeur **diffère du défaut**.
@@ -125,6 +169,14 @@ de configuration.
 
 ## Rendu
 
+- **Au démarrage.** Presque tous les segments décrivent la **dernière requête au modèle**, qu'une
+  session qui n'en a encore envoyé aucune n'a pas ; la ligne affiche donc ce qui est déjà connu au
+  lieu d'attendre le premier `model_request_end` : le modèle et l'effort depuis
+  `~/.commandcode/config.json`, plus le nom de session, l'état git et le répertoire. Une session
+  **reprise** restaure en outre depuis le transcript le modèle, l'effort, le contexte, le taux de
+  cache et le coût de la dernière requête : elle s'ouvre sur la même ligne complète que celle
+  quittée. Seules la vitesse de sortie et les tokens de sous-agent exigent vraiment une requête (le
+  produit ne persiste ni l'une ni les autres).
 - `COLORTERM=truecolor|24bit` → barre 24 bits ; sinon approximation 256 couleurs ; `ascii=true` ou
   `TERM=dumb` → `#`/`-` ; `NO_COLOR` garde les blocs mais retire la couleur.
 - **Terminaux étroits :** au lieu de tronquer, les segments sont retirés par priorité
@@ -136,7 +188,7 @@ de configuration.
 
 | Valeur | Source | Fiabilité |
 |---|---|---|
-| modèle / effort / contexte / cache | événements `model_request_start` / `model_request_end` | exact |
+| modèle / effort / contexte / cache | événements `model_request_start` / `model_request_end` (model/effort avant la première requête depuis `~/.commandcode/config.json` ; à la reprise, depuis le transcript) | exact après une requête ; la valeur initiale est celle du produit |
 | coût de session | `costUsd` de `<sessionId>.jsonl` à la reprise + `usage` par requête valorisé par la table de prix | la partie reprise est le chiffre du produit lui-même ; la partie nouvelle reproduit sa comptabilité (vérifiée entrée par entrée) |
 | jetons des sous-agents | événements `subagent_stop` | jetons exacts ; leur dépense n'est **pas** incluse dans le coût (le produit ne la persiste pas non plus) |
 | nom de session | événement `session_titled` + `<sessionId>.meta.json` au démarrage | au mieux : le format du fichier n'est pas documenté et la lecture est protégée par un `try` |
@@ -171,8 +223,9 @@ La CI exécute la même suite sous Linux, macOS et Windows.
 - Le coût des nouvelles requêtes est calculé avec la table de prix embarquée, pas relu du transcript :
   un changement de tarif impose de relancer `scripts/gen-model-tables.py` (la graine de reprise comme
   le calcul par requête sont confrontés aux chiffres du produit).
-- Le nom de session et la restauration du coût lisent `~/.commandcode/projects/**`, une disposition
-  non documentée. Tout est protégé : un changement se traduit par « segment absent », jamais un crash.
+- Le nom de session et la restauration du coût lisent `~/.commandcode/projects/**`, et la valeur
+  initiale model/effort au démarrage lit `~/.commandcode/config.json` : des dispositions non
+  documentées. Tout est protégé : un changement se traduit par « segment absent », jamais un crash.
 - **Interrogation sur les très gros dépôts.** La ligne relit `git status` toutes les `refresh`
   secondes (10 par défaut). Cet appel est gratuit sur un petit dépôt, pas sur un énorme : augmentez
   `refresh` ou mettez-le à `0` et laissez les rafraîchissements par événement faire le travail.

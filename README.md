@@ -14,6 +14,15 @@ Command Code has no Claude Code-style `statusLine` command hook — `cmd.ui.setS
 mod API) is the only way to render a persistent row under the input, and that is what this
 mod uses.
 
+## Requirements
+
+**Command Code ≥ 1.10.0** (`cmd`, or `cmdc` on Windows). Older builds are **not supported**: on an
+older host the mod does nothing at all — it registers nothing, draws no footer, and leaves one
+upgrade notice in the feed before disabling itself. Run `cmdc update` and start a new session. The
+floor is not a guess: below 1.10.0 the mod API has no `cmd.ui.capabilities` probe (checked against
+every published 1.x package), so the mod cannot even tell whether this host renders a footer — it
+would throw rather than degrade. The `/statusline` report prints the host version it detected.
+
 ## Install
 
 ```bash
@@ -101,6 +110,19 @@ Settings live in JSON; the command line can override per run.
 }
 ```
 
+`preset` picks a ready-made set of segments so you do not have to list a dozen keys:
+
+| `preset` | Turned on |
+|---|---|
+| `full` (default) | every segment |
+| `minimal` | `model` `effort` `context` `bar` `percent` `git` |
+| `usage` | `context` `bar` `percent` `cache` `cost` `sub` |
+
+A preset only decides *which segments are on*. A key written beside it overrides it
+(`{"preset": "minimal", "cost": true}` keeps the cost segment), and the rendering switches
+(`ascii`, `raw-model`) are orthogonal to it. An unrecognised preset is reported and treated as
+`full`.
+
 | Key | Default | Notes |
 |---|---|---|
 | `model`, `effort`, `context` | `true` | model / reasoning effort / context of the last request |
@@ -112,9 +134,38 @@ Settings live in JSON; the command line can override per run.
 | `name` | `true` | session name (truncated at 24 chars) |
 | `git` | `true` | branch + change counts |
 | `cwd` | `true` | directory basename |
+| `preset` | `full` | `full` / `minimal` / `usage` |
 | `raw-model` | `false` | keep the vendor prefix in the model id |
 | `ascii` | `false` | force plain ASCII rendering |
 | `refresh` | `10` | seconds between git re-reads (0 disables the timer) |
+
+### Seeing what is actually in effect
+
+`/statusline` prints the rendered line, the raw values behind it, and a
+`key / default / effective / source` table for every key — plus the config files it read and a
+line for each thing it could not use: a key it does not know (usually a typo), a value of the
+wrong shape, an unrecognised preset. Rejected values fall back to the default rather than being
+half-applied, and are named so you are not left guessing why a change did nothing.
+
+```text
+配置（键 / 默认 / 生效 / 来源）：
+model     true   true   内置默认
+cache     true   false  用户
+cost      true   true   预设 usage
+refresh   10     0      命令行
+文件：C:\Users\you\.commandcode\statusline.json
+⚠ 未知键 "speedd"（用户）—— 拼错了？
+```
+
+### Changing it without hand-editing JSON
+
+`/statusline config` drives the same thing through Command Code's dialogs (`cmd.ui.select` /
+`input` / `confirm`): pick the scope (user or project), pick a key, pick a value, confirm. It
+writes that one key into the JSON — leaving the rest of the file, including keys this mod does
+not know, untouched — then re-reads it and repaints the footer **immediately**, so there is no
+`/reload` round trip. A run without a dialog bridge (headless) prints the report instead of
+writing anything. If something with higher precedence (the project file, `--mod-option`) keeps
+the old value, the flow says so instead of leaving you with a write that visibly did nothing.
 
 **Precedence caveat:** Command Code strips `--mod-option` values out of the argv a mod can
 see, so a flag is only treated as an explicit override when its value *differs from the
@@ -126,6 +177,13 @@ one declaring `cwd`.
 
 ## Rendering
 
+- **Startup.** Most segments report the *last model request*, which a session that has not sent
+  one yet does not have — so the line paints what is knowable immediately instead of waiting for
+  the first `model_request_end`: the model and reasoning effort from `~/.commandcode/config.json`,
+  plus the session name, git state and directory. A **resumed** session also restores the last
+  request's model, effort, context, cache hit rate and cost from the transcript, so it opens with
+  the same complete line it was left in. Only output speed and sub-agent tokens genuinely need a
+  request to happen (the product persists neither).
 - `COLORTERM=truecolor|24bit` → 24-bit gradient bar; otherwise a 256-colour approximation;
   `ascii=true` or `TERM=dumb` → `#`/`-`; `NO_COLOR` keeps the block characters but drops colour.
 - **Narrow terminals:** instead of clipping, segments are dropped by priority
@@ -137,7 +195,8 @@ one declaring `cwd`.
 
 | Value | Source | Confidence |
 |---|---|---|
-| model / effort / context / cache | `model_request_start` / `model_request_end` event payloads | exact |
+| model / effort | `model_request_start` / `model_request_end` event payloads; seeded from `~/.commandcode/config.json` before the first request, and from the transcript on resume | exact once a request has run; the seed is the product's own value |
+| context / cache | `model_request_end` usage; on resume, the last `usage` in the transcript | exact |
 | session cost | `<sessionId>.jsonl` transcript (`costUsd`) on resume + per-request `usage` priced with the table below | the resume half is the product's own number; the per-request half reproduces the product's accounting exactly (verified entry-by-entry against recorded `costUsd`) |
 | sub-agent tokens | `subagent_stop` events | exact for tokens; sub-agent spend is **not** included in the cost segment (the product does not persist it either) |
 | session name | `session_titled` event + `<sessionId>.meta.json` on start | best-effort seed — the file layout is undocumented and read inside a `try` |
@@ -173,9 +232,9 @@ suite on Linux, macOS and Windows.
 - Cost for *new* requests is computed from the shipped price table rather than read back from
   the transcript, so a price change needs `scripts/gen-model-tables.py` re-run (the resume
   seed and the per-request math are both checked against the product's own numbers).
-- The session name and cost restore read `~/.commandcode/projects/**` — an undocumented
-  layout. Everything is wrapped so a layout change degrades to "segment missing", never a
-  crash.
+- The session name, cost and request restore read `~/.commandcode/projects/**`, and the
+  startup model/effort seed reads `~/.commandcode/config.json` — undocumented layouts. Everything
+  is wrapped so a layout change degrades to "segment missing", never a crash.
 - **Polling on huge repositories.** The footer re-reads `git status` every `refresh`
   seconds (default 10). That call is free in small repos but not in enormous ones — raise
   `refresh` or set it to `0` and let the event-driven refreshes do the work.
