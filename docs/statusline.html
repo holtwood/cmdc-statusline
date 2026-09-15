@@ -1,0 +1,50 @@
+<!doctype html>
+<!-- cmdc-statusline 演示图：配色按 index.ts 的 ANSI 输出还原（bold cyan 模型 / dim effort /
+     绿→红按格位渐变的进度条 / magenta 分支 / +绿 ~黄 ?灰），改完用 kit-capture 截 #screen。 -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: transparent; }
+  #screen {
+    box-sizing: border-box;
+    width: max-content;
+    padding: 30px 34px;
+    background: #14171c;
+    color: #c9d1d9;
+    font: 15px/1.7 "Cascadia Code", "Cascadia Mono", "JetBrains Mono", Consolas, Menlo, monospace;
+    white-space: pre;
+  }
+  .prompt-char { color: #3fb950; }
+  .reply       { color: #7d8590; }
+  .inputbox {
+    margin-top: 10px;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 8px 14px;
+    color: #8b949e;
+  }
+  .cursor { color: #58a6ff; }
+  .statusline { margin-top: 10px; }
+  .sep    { color: #484f58; }
+  .model  { color: #39c5cf; font-weight: 700; }
+  .effort { color: #6e7681; }
+  .gray   { color: #7d8590; }
+  .green  { color: #3fb950; }
+  .yellow { color: #d29922; }
+  .name   { color: #e6edf3; font-weight: 700; }
+  .branch { color: #d2a8ff; }
+  .dim    { color: #6e7681; }
+  .bar    { letter-spacing: 0; }
+</style>
+</head>
+<body>
+<div id="screen"><span class="prompt-char">❯</span> <span style="color:#e6edf3">help me refactor the auth middleware</span>
+
+<span class="reply">⏺ Done — extracted <span style="color:#a5d6ff">validateToken()</span> into <span style="color:#a5d6ff">src/auth/token.ts</span> (+48 −12).</span>
+
+<div class="inputbox">&gt; <span class="cursor">▍</span></div>
+<div class="statusline"><span class="model">deepseek-v4.1-flash</span><span class="sep"> │ </span><span class="effort">max</span><span class="sep"> │ </span><span class="bar"><span style="color:rgb(0,200,0)">█</span><span style="color:rgb(36,200,0)">█</span><span style="color:rgb(73,200,0)">█</span><span style="color:rgb(109,200,0)">█</span><span style="color:rgb(145,200,0)">█</span><span style="color:rgb(182,200,0)">█</span><span class="dim">░░░░░░</span></span> <span class="gray">96k</span> <span class="gray">(47%)</span><span class="sep"> │ </span><span class="green">cache 99%</span><span class="sep"> │ </span><span class="gray">$0.013</span><span class="sep"> │ </span><span class="gray">42 tok/s</span><span class="sep"> │ </span><span class="gray">sub 16k</span><span class="sep"> │ </span><span class="name">Simple Reply</span><span class="sep"> │ </span><span class="branch">main</span><span class="dim"> ↑1</span><span class="sep"> │ </span><span class="green">+1</span> <span class="yellow">~2</span> <span class="gray">?1</span><span class="sep"> │ </span><span class="gray">my-project</span></div>
+</div>
+</body>
+</html>
