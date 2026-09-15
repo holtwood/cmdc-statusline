@@ -64,8 +64,13 @@ Paste this into your agent:
 ```
 ~/.commandcode/statusline.json          user scope
 <project>/.commandcode/statusline.json  project scope (overrides user)
---mod-option <key>=<value>              per-run override
+--mod-option statusline.<key>=<value>   per-run override
 ```
+
+Flag names carry a `statusline.` prefix, the keys in `statusline.json` do not: Command Code
+keeps mod flag values in one process-wide table keyed by name, so two mods declaring the same
+flag name would silently share whatever either one sets — including the default, where the
+first declaration wins. A file name is already a namespace; a CLI flag name is not.
 
 ```json
 {"preset": "full", "bar-width": 12, "refresh": 10, "cache": true, "cost": true}
@@ -95,7 +100,7 @@ Two commands inspect and change this without touching JSON:
   one key and repaints immediately, no `/reload`.
 
 Caveat: `--mod-option` only counts as an override when the value differs from the built-in
-default — passing `cwd=true` explicitly won't beat a config file saying `false`.
+default — passing `statusline.cwd=true` explicitly won't beat a config file saying `false`.
 
 ### How it works
 
@@ -178,8 +183,12 @@ Windows 上命令是 `cmdc`（`cmd` 是系统 shell）；WSL 中 `cmd` 与 `cmdc
 ```
 ~/.commandcode/statusline.json          用户级
 <项目>/.commandcode/statusline.json     项目级（覆盖用户级）
---mod-option <键>=<值>                   单次运行覆盖
+--mod-option statusline.<键>=<值>       单次运行覆盖
 ```
+
+flag 名带 `statusline.` 前缀、`statusline.json` 里的键不带：宿主把所有 mod 的 flag 取值放在
+一张进程级共享表里按名字索引，两个 mod 声明同名 flag 会静默共用同一个值（默认值先声明者胜，
+`--mod-option` 的类型也由第一个声明者决定）。文件名本身已经是一个命名空间，命令行的 flag 名不是。
 
 ```json
 {"preset": "full", "bar-width": 12, "refresh": 10, "cache": true, "cost": true}
@@ -206,7 +215,7 @@ Windows 上命令是 `cmdc`（`cmd` 是系统 shell）；WSL 中 `cmd` 与 `cmdc
 - `/statusline config` —— 对话框式编辑（选作用域 → 键 → 值 → 确认），只写一个键并立刻
   重绘，不用 `/reload`。
 
-注意：`--mod-option` 只在取值与内置默认不同时才算显式覆盖——显式传 `cwd=true` 压不过
+注意：`--mod-option` 只在取值与内置默认不同时才算显式覆盖——显式传 `statusline.cwd=true` 压不过
 写着 `false` 的配置文件。
 
 ### 工作原理
@@ -288,7 +297,7 @@ Windows 上命令是 `cmdc`（`cmd` 是系統 shell）；WSL 中 `cmd` 與 `cmdc
 ```
 ~/.commandcode/statusline.json          使用者級
 <專案>/.commandcode/statusline.json     專案級（覆蓋使用者級）
---mod-option <鍵>=<值>                   單次執行覆蓋
+--mod-option statusline.<鍵>=<值>       單次執行覆蓋
 ```
 
 ```json
@@ -316,7 +325,7 @@ Windows 上命令是 `cmdc`（`cmd` 是系統 shell）；WSL 中 `cmd` 與 `cmdc
 - `/statusline config` —— 對話框式編輯（選作用域 → 鍵 → 值 → 確認），只寫一個鍵並立刻
   重繪，不用 `/reload`。
 
-注意：`--mod-option` 只在取值與內建預設不同時才算顯式覆蓋——顯式傳 `cwd=true` 壓不過
+注意：`--mod-option` 只在取值與內建預設不同時才算顯式覆蓋——顯式傳 `statusline.cwd=true` 壓不過
 寫著 `false` 的設定檔。
 
 ### 運作原理
@@ -401,7 +410,7 @@ Windows ではコマンドは `cmdc` です（`cmd` は Windows のシェル）�
 ```
 ~/.commandcode/statusline.json          ユーザースコープ
 <プロジェクト>/.commandcode/statusline.json  プロジェクトスコープ（ユーザーを上書き）
---mod-option <キー>=<値>                 実行ごとの上書き
+--mod-option statusline.<キー>=<値>     実行ごとの上書き
 ```
 
 ```json
@@ -431,7 +440,7 @@ JSON を触らずに確認・変更できるコマンドが 2 つあります:
   `/reload` なしで即座に再描画します。
 
 注意: `--mod-option` は値が組み込み既定と異なる場合にだけ明示的な上書きと見なされます——
-`cwd=true` を明示しても `false` と書かれた設定ファイルには勝てません。
+`statusline.cwd=true` を明示しても `false` と書かれた設定ファイルには勝てません。
 
 ### 仕組み
 
@@ -516,7 +525,7 @@ Windows에서는 바이너리가 `cmdc`입니다(`cmd`는 Windows 셸). WSL에�
 ```
 ~/.commandcode/statusline.json          사용자 범위
 <프로젝트>/.commandcode/statusline.json  프로젝트 범위(사용자보다 우선)
---mod-option <키>=<값>                   실행 단위 재정의
+--mod-option statusline.<키>=<값>        실행 단위 재정의
 ```
 
 ```json
@@ -544,7 +553,7 @@ JSON을 만지지 않고 확인·변경하는 명령 두 개:
 - `/statusline config` — 대화 상자 편집기(범위 → 키 → 값 → 확인). 키 하나만 쓰고 `/reload` 없이
   즉시 다시 그립니다.
 
-주의: `--mod-option`은 값이 내장 기본값과 다를 때만 명시적 재정의로 인정됩니다 — `cwd=true`를
+주의: `--mod-option`은 값이 내장 기본값과 다를 때만 명시적 재정의로 인정됩니다 — `statusline.cwd=true`를
 명시해도 `false`라고 쓴 설정 파일에는 지지 않습니다.
 
 ### 동작 원리
@@ -634,7 +643,7 @@ Pega esto en tu agente:
 ```
 ~/.commandcode/statusline.json          ámbito de usuario
 <proyecto>/.commandcode/statusline.json ámbito de proyecto (prevalece sobre el de usuario)
---mod-option <clave>=<valor>            ajuste por ejecución
+--mod-option statusline.<clave>=<valor> ajuste por ejecución
 ```
 
 ```json
@@ -666,7 +675,7 @@ Dos comandos lo consultan y lo cambian sin tocar el JSON:
   escribe una sola clave y repinta al instante, sin `/reload`.
 
 Ojo: `--mod-option` solo cuenta como ajuste explícito cuando el valor difiere del
-predeterminado — pasar `cwd=true` no gana a un archivo de configuración que dice `false`.
+predeterminado — pasar `statusline.cwd=true` no gana a un archivo de configuración que dice `false`.
 
 ### Cómo funciona
 
@@ -758,7 +767,7 @@ Collez ceci dans votre agent :
 ```
 ~/.commandcode/statusline.json          portée utilisateur
 <projet>/.commandcode/statusline.json   portée projet (prime sur l'utilisateur)
---mod-option <clé>=<valeur>             ajustement par exécution
+--mod-option statusline.<clé>=<valeur>  ajustement par exécution
 ```
 
 ```json
@@ -789,7 +798,7 @@ Deux commandes inspectent et modifient tout ça sans toucher au JSON :
   n'écrit qu'une clé et repeint aussitôt, sans `/reload`.
 
 Attention : `--mod-option` ne compte comme ajustement explicite que si la valeur diffère du
-défaut intégré — passer `cwd=true` ne bat pas un fichier de configuration disant `false`.
+défaut intégré — passer `statusline.cwd=true` ne bat pas un fichier de configuration disant `false`.
 
 ### Fonctionnement
 
@@ -881,7 +890,7 @@ Folgendes in den Agenten einfügen:
 ```
 ~/.commandcode/statusline.json          Benutzer-Scope
 <projekt>/.commandcode/statusline.json  Projekt-Scope (überstimmt Benutzer)
---mod-option <schlüssel>=<wert>         Override pro Lauf
+--mod-option statusline.<schlüssel>=<wert> Override pro Lauf
 ```
 
 ```json
@@ -913,7 +922,7 @@ Zwei Befehle zeigen und ändern das, ohne JSON anzufassen:
   schreibt genau einen Schlüssel und zeichnet sofort neu, ohne `/reload`.
 
 Achtung: `--mod-option` gilt nur dann als expliziter Override, wenn der Wert vom eingebauten
-Standard abweicht — `cwd=true` explizit zu übergeben schlägt keine Konfigurationsdatei mit
+Standard abweicht — `statusline.cwd=true` explizit zu übergeben schlägt keine Konfigurationsdatei mit
 `false`.
 
 ### Funktionsweise
@@ -1007,7 +1016,7 @@ cmd mods list
 ```
 ~/.commandcode/statusline.json          пользовательский уровень
 <проект>/.commandcode/statusline.json   уровень проекта (перекрывает пользовательский)
---mod-option <ключ>=<значение>          переопределение на запуск
+--mod-option statusline.<ключ>=<значение> переопределение на запуск
 ```
 
 ```json
@@ -1039,7 +1048,7 @@ cmd mods list
   пишет ровно один ключ и сразу перерисовывает, без `/reload`.
 
 Важно: `--mod-option` считается явным переопределением, только если значение отличается от
-встроенного умолчания — явный `cwd=true` не перекроет конфиг с `false`.
+встроенного умолчания — явный `statusline.cwd=true` не перекроет конфиг с `false`.
 
 ### Как это работает
 

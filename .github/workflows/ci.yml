@@ -22,6 +22,18 @@ jobs:
       - name: Test — imports index.ts directly (native type stripping, no build)
         run: node test/statusline.test.mjs
 
+  test-floor:
+    # engines 写的是 >=22.18，而测试直接 import index.ts —— 吃的是 Node 的原生类型擦除，
+    # 22.18 恰好是这条能力刚放开的那一版。只在 24 上跑绿，证明不了最低支持线是绿的。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18.0'
+      - name: Test on the declared minimum Node
+        run: node test/statusline.test.mjs
+
   typecheck:
     # 测试只验证运行时行为，类型错了不会发现；import type 指向本地 mod-api.d.ts
     # （ModApi 不在任何已发布包里，声明按 mod-builder 文档手写），这里逼它持续为真。

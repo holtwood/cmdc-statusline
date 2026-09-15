@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.7.0
+
+- **Flag names are namespaced: `--mod-option statusline.<key>=<value>`.** Breaking for the
+  command line only — the JSON keys, the `key / default / effective / source` table and the
+  interactive editor all keep the short names. Migration is mechanical: `--mod-option cache=false`
+  becomes `--mod-option statusline.cache=false`.
+
+  The host keeps mod flag *values* in one process-wide table keyed by name: `addFlag` writes a
+  default only when the name is still free, `getFlag` reads that one table, and `--mod-option`
+  resolves the value's type from the first mod that declared the name. Two mods declaring `cache`
+  would therefore share a single value — whoever declared first would own the default for both,
+  and the second mod's own default would never be visible. Measured against the real host
+  (1.54.0, host module loaded directly): with mod B declaring `{type: 'string', default: 'fromB'}`
+  for a name mod A had already declared as boolean, `B.getFlag(name)` reads `true`; after
+  `--mod-option model=hello` both mods read boolean `false`, the string having been coerced by
+  A's type; and a declaration without a default sits in whatever value another mod put there.
+
+  A config *file* has no such problem — `statusline.json` is its own namespace — so only the
+  names sent to the host carry the prefix. `flagName()` is the single derivation point, the
+  report's source column now spells the flag out (`命令行 (--mod-option statusline.cache)`)
+  because the table itself shows short keys, and the report tip names the form.
+- **The test stub models the host's flag semantics instead of pretending they don't exist.**
+  Every stub used to get its own private flag map, which made exactly the collision above
+  untestable: values now live in an injectable table, declarations stay per-mod, and the first
+  default wins — the three behaviours the host was measured to have. Two guards keep the module
+  honest: every registered flag must carry the prefix, and a foreign mod writing `cache` into the
+  shared table must not reach `statusline.cache`. The README check grew the same way — all nine
+  language sections must spell the prefixed form, and a surviving `--mod-option <key>=…` example
+  fails the suite.
+- **Old hosts can no longer turn every event into a `mod_error`.** `cmd.ui.capabilities` is now
+  declared optional, because 1.9.0 genuinely has no such property (its `setStatus` is a no-op;
+  1.10.0 is where both appear — that is what the floor is made of), and the three reads use
+  optional chaining. The version gate stays best-effort by design: when the host version cannot
+  be read it does not guess, and the mod proceeds. Reproduced end-to-end by registering the real
+  `index.ts` against a host whose `capabilities` is absent: the mod used to throw inside
+  `onSessionStart` (reported as `mod_error`, not a crash), and now paints nothing instead. The
+  report distinguishes the two cases rather than calling both headless — `footer=未知` when the
+  host has no capability surface at all.
+- `DROP_ORDER` lookups are exhaustive now: the entry key is typed `keyof typeof DROP_ORDER`, so a
+  segment missing from the table is a compile error rather than silently taking priority 5.
+- `gen-model-tables.py` names the file it actually searched when a marker block is missing; the
+  message had been hard-coded to `statusline.ts` since before the file was renamed to `index.ts`,
+  and it stayed wrong under `--ts`.
+- CI runs the suite on the declared minimum Node (22.18.0) alongside 24: the tests import
+  TypeScript directly and depend on native type stripping, which is precisely what that floor is
+  about, and a 24-only matrix never proved it.
+- 315 checks.
+
 ## 0.6.1
 
 - **One README instead of nine.** The eight translated `README.<lang>.md` files were folded into

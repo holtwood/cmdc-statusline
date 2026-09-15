@@ -138,12 +138,13 @@ def render(windows: dict[str, int], prices: dict[str, dict[str, float]], unknown
     return window_block, price_block
 
 
-def splice(source: str, name: str, block: str) -> str:
+def splice(source: str, path: str, name: str, block: str) -> str:
     pattern = re.compile(
         rf"(// >>> GENERATED:{name}.*?\n)(.*?)(// <<< GENERATED:{name})", re.S
     )
     if not pattern.search(source):
-        sys.exit(f"statusline.ts 里找不到 GENERATED:{name} 标记块")
+        # 出错文案要点真实路径：写死文件名会在 --ts 指向别处时指错人
+        sys.exit(f"{path} 里找不到 GENERATED:{name} 标记块")
     return pattern.sub(lambda m: m.group(1) + block + "\n" + m.group(3), source)
 
 
@@ -158,7 +159,7 @@ def main() -> int:
     windows, prices, unknown = parse(args.models_md)
     window_block, price_block = render(windows, prices, unknown)
     source = open(args.ts, encoding="utf-8").read()
-    updated = splice(splice(source, "WINDOWS", window_block), "PRICES", price_block)
+    updated = splice(splice(source, args.ts, "WINDOWS", window_block), args.ts, "PRICES", price_block)
 
     if args.check:
         if updated == source:

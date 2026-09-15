@@ -17,13 +17,19 @@
 // 配置（优先级：内置默认 < preset < 用户级 < 项目级 < 命令行）：
 //   ~/.commandcode/statusline.json          用户级
 //   <项目>/.commandcode/statusline.json     项目级（覆盖用户级）
-//   --mod-option name=value                 命令行（仅在取值与内置默认不同时才判定为显式覆盖——
+//   --mod-option statusline.<键>=<值>       命令行（仅在取值与内置默认不同时才判定为显式覆盖——
 //                                           cmdc 会把 --mod-option 的值从 mod 可见的 argv 里抹掉，
 //                                           故无法精确区分「显式传了默认值」）
 //   可用键：model/effort/context/bar/bar-width/percent/cache/cost/speed/sub/name/git/cwd/
 //          preset/raw-model/ascii/refresh/lang（lang=zh|en 只影响报告与弹窗文案）
 //   preset：full（全部，默认）/ minimal（模型+effort+上下文+分支）/ usage（上下文+缓存+花费+子代理）。
 //           它只决定「哪些段位开」，写死某个键即可覆盖它；渲染开关（ascii/raw-model）与它无关。
+//
+// 为什么 flag 名有前缀、配置键没有：宿主把 mod 的 flag 取值放在一张进程级共享表里按名字索引
+// （实测：addFlag 写默认值时先到先得，getFlag 一律从这张表读，--mod-option 的类型由第一个
+// 声明者决定）——两个 mod 声明同名 flag 就会静默串值，撞名的另一方连自己的默认值都读不到。
+// 配置文件没有这个问题：statusline.json 这个文件名本身就是它的命名空间。所以只有发往宿主的
+// flag 名带 statusline. 前缀，键名（JSON、报告表、选择器）保持短名；flagName() 是唯一派生点。
 //
 // 自助排错与配置（不需要翻 README）：
 //   /statusline         打印「键 / 默认 / 生效 / 来源」全表，并把 JSON 里的未知键（拼错）与
@@ -173,7 +179,10 @@ export function gitGapMs(durationMs: number): number {
 
 const ANSI_PATTERN = /\u001b\[[0-9;]*m/g;
 
-// 窄终端丢弃顺序：数字越大越先丢；0 = 永不丢
+// 窄终端丢弃顺序：数字越大越先丢；0 = 永不丢。
+// 注意这里的键不是 flag 键：git 一段在渲染时拆成 gitBranch / gitChanges 两个条目，
+// 各自有一个在这里的排名。条目键的类型就取自这张表（DropKey），所以 push() 里写错名字
+// 是编译错误，不会像从前那样静默落到一个中间优先级上。
 const DROP_ORDER = {
 	cwd: 11,
 	speed: 10,
@@ -187,6 +196,8 @@ const DROP_ORDER = {
 	gitBranch: 2,
 	model: 0,
 } as const;
+
+type DropKey = keyof typeof DROP_ORDER;
 
 const ANSI = {
 	reset: '\u001b[0m',
@@ -543,11 +554,11 @@ export function composeLine(
 ): string {
 	const paint = (code: string, text: string) =>
 		options.color ? `${code}${text}${ANSI.reset}` : text;
-	const entries: {key: string; priority: number; variants: string[]}[] = [];
-	const push = (key: string, variants: string[]): void => {
+	const entries: {key: DropKey; priority: number; variants: string[]}[] = [];
+	const push = (key: DropKey, variants: string[]): void => {
 		const filled = variants.filter(Boolean);
 		if (filled.length > 0) {
-			entries.push({key, priority: DROP_ORDER[key as keyof typeof DROP_ORDER] ?? 5, variants: filled});
+			entries.push({key, priority: DROP_ORDER[key], variants: filled});
 		}
 	};
 
@@ -699,6 +710,13 @@ const FLAG_SPECS: readonly FlagSpec[] = [
 ];
 
 const FLAG_BY_NAME = new Map(FLAG_SPECS.map(spec => [spec.name, spec]));
+
+// 「键」与「flag 名」是同一个东西的两副名字：键是 statusline.json 里的短名（也是报告表与
+// 选择器里的名字），flag 名是发给宿主的那份，必须带前缀——宿主的 flag 取值表是进程级共享、
+// 按名字索引的，不加前缀就会和别的 mod 撞（见文件头）。派生只有这一处：改前缀就全改。
+export function flagName(key: string): string {
+	return `statusline.${key}`;
+}
 
 // 预设只决定段位开关，没列出的键按「关」算（否则 minimal 不 minimal）
 const PRESETS: Record<string, Record<string, boolean>> = {
@@ -1026,7 +1044,8 @@ const L10N = {
 		builtin: '内置默认',
 		userScope: '用户',
 		projectScope: '项目',
-		cli: '命令行',
+		// 命令行这一条带 flag 全名：报告表里的键是短名，命令行上写的是带前缀的 flag 名
+		cliFlag: (flag: string) => `命令行 (--mod-option ${flag})`,
 		presetSource: (name: string) => `预设 ${name}`,
 		on: '开',
 		off: '关',
@@ -1089,7 +1108,8 @@ const L10N = {
 		seedDrift:
 			'transcript 里有 usage/model 记录，但一条都没按现有行尾格式解析出来 —— ' +
 			'产品的 transcript 格式可能已变化，恢复出的花费/上下文可能不准',
-		tip: '提示：/statusline config 交互式修改（选完即写入并立刻重绘，不用 /reload）',
+		// 表里的键是短名，命令行上要写 flag 全名 —— 提示里按 flagName() 出，前缀改了它跟着改
+		tip: `提示：/statusline config 交互式修改（选完即写入并立刻重绘，不用 /reload）；命令行覆盖写作 --mod-option ${flagName('<键>')}=<值>`,
 		oldHost: (min: string, current: string) =>
 			`statusline 需要 cmdc ≥ ${min}（当前 ${current}）：本 mod 不支持旧版本，已停用。请先更新 cmdc（cmdc update），再重开会话。`,
 		slowGit: (durationS: string, intervalS: number, gapS: number) =>
@@ -1100,7 +1120,7 @@ const L10N = {
 		builtin: 'builtin',
 		userScope: 'user',
 		projectScope: 'project',
-		cli: 'CLI',
+		cliFlag: (flag: string) => `CLI (--mod-option ${flag})`,
 		presetSource: (name: string) => `preset ${name}`,
 		on: 'On',
 		off: 'Off',
@@ -1163,7 +1183,7 @@ const L10N = {
 		seedDrift:
 			'the transcript has usage/model records but none matched the expected tail shape — ' +
 			'the internal format may have changed; restored cost/context may be off',
-		tip: 'Tip: /statusline config edits interactively (writes + repaints right away, no /reload)',
+		tip: `Tip: /statusline config edits interactively (writes + repaints right away, no /reload); a CLI override reads --mod-option ${flagName('<key>')}=<value>`,
 		oldHost: (min: string, current: string) =>
 			`statusline requires cmdc ≥ ${min} (current ${current}): old hosts are not supported; disabled. Update cmdc (cmdc update) and reopen the session.`,
 		slowGit: (durationS: string, intervalS: number, gapS: number) =>
@@ -1200,7 +1220,7 @@ export default function (cmd: ModApi): void {
 	}
 
 	for (const spec of FLAG_SPECS) {
-		cmd.addFlag(spec.name, {
+		cmd.addFlag(flagName(spec.name), {
 			type: spec.type,
 			default: spec.default,
 			// 描述文本此刻只能看配置文件里的 lang：flag 还没注册，CLI 覆盖无从谈起
@@ -1218,7 +1238,7 @@ export default function (cmd: ModApi): void {
 	let gitReading = false;
 
 	const presetName = (): string => {
-		const cli = cmd.getFlag('preset');
+		const cli = cmd.getFlag(flagName('preset'));
 		const configured = config['preset'];
 		// 命令行只在「与内置默认不同」时才算显式覆盖（宿主会抹掉 argv 里的 =value）
 		const raw =
@@ -1232,8 +1252,10 @@ export default function (cmd: ModApi): void {
 
 	// 生效来源是数据不是字符串：文案延迟到渲染处按当前 lang 出，
 	// 否则 lang=en 的报告里会混进中文的「命令行/预设 x」。
+	// CLI 那条带着键名：来源列要说清「命令行」具体是哪个 flag —— 报告和选择器里的名字是短键，
+	// 命令行上要用的是带前缀的 flag 名，两副名字必须在这里对上。
 	type FlagSource =
-		| {kind: 'cli'}
+		| {kind: 'cli'; key: string}
 		| {kind: 'file'; path?: string}
 		| {kind: 'preset'; name: string}
 		| {kind: 'default'};
@@ -1244,9 +1266,9 @@ export default function (cmd: ModApi): void {
 	const resolveFlag = (name: string): {value: unknown; source: FlagSource} => {
 		const spec = FLAG_BY_NAME.get(name);
 		const base = spec?.default;
-		const cli = cmd.getFlag(name);
+		const cli = cmd.getFlag(flagName(name));
 		if (spec && typeof cli === typeof base && cli !== base) {
-			return {value: canonical(spec, cli), source: {kind: 'cli'}};
+			return {value: canonical(spec, cli), source: {kind: 'cli', key: name}};
 		}
 		const configured = config[name];
 		if (spec && configured !== undefined && acceptsValue(spec, configured)) {
@@ -1267,7 +1289,7 @@ export default function (cmd: ModApi): void {
 		const t = s();
 		switch (source.kind) {
 			case 'cli':
-				return t.cli;
+				return t.cliFlag(flagName(source.key));
 			case 'file':
 				return source.path === undefined
 					? t.builtin
@@ -1323,11 +1345,11 @@ export default function (cmd: ModApi): void {
 			}
 		}
 		// 大小写不敏感，所以判定也要先归一化 —— 否则 {"preset":"Minimal"} 会被误报成未知预设
-		const cliPreset = cmd.getFlag('preset');
+		const cliPreset = cmd.getFlag(flagName('preset'));
 		const configured = config['preset'];
 		const bogus =
 			typeof cliPreset === 'string' && cliPreset !== 'full' && !isPresetName(cliPreset.toLowerCase())
-				? {value: cliPreset, where: t.cli}
+				? {value: cliPreset, where: t.cliFlag(flagName('preset'))}
 				: typeof configured === 'string' && !isPresetName(configured.toLowerCase())
 					? {value: configured, where: sourceText({kind: 'file', path: configOrigin['preset']})}
 					: undefined;
@@ -1337,11 +1359,11 @@ export default function (cmd: ModApi): void {
 			warnings.push(t.unknownPreset(JSON.stringify(bogus.value), bogus.where, effective));
 		}
 		// lang 同 preset：字符串但认不出（如 "fr"）→ 点名 + 实际按 zh 走；非字符串已被上面 badValue 兜住
-		const cliLang = cmd.getFlag('lang');
+		const cliLang = cmd.getFlag(flagName('lang'));
 		const confLang = config['lang'];
 		const bogusLang =
 			typeof cliLang === 'string' && cliLang !== 'zh' && langOf(cliLang) === undefined
-				? {value: cliLang, where: t.cli}
+				? {value: cliLang, where: t.cliFlag(flagName('lang'))}
 				: typeof confLang === 'string' && langOf(confLang) === undefined
 					? {value: confLang, where: sourceText({kind: 'file', path: configOrigin['lang']})}
 					: undefined;
@@ -1516,15 +1538,18 @@ export default function (cmd: ModApi): void {
 		});
 
 	// 重绘是同步且幂等的（宿主自己会去重相同文本），所以它永远不等 git：
-	// 从前 refresh() 先 await git 再画，一个 8 秒的 git status 会把模型/花费/上下文一起卡 8 秒
+	// 从前 refresh() 先 await git 再画，一个 8 秒的 git status 会把模型/花费/上下文一起卡 8 秒。
+	// capabilities 用可选链：版本闸门是尽力而为的（宿主版本读不出来时不猜、放行），而 1.9.0
+	// 的 ModUi 上根本没有这个属性，直接取 .status 会让每次事件都变成一个 mod_error。
+	// 兜底成「什么都不画」，比在用户会话里持续报错体面。
 	const paint = (): void => {
-		if (!cmd.ui.capabilities.status) return;
+		if (!cmd.ui.capabilities?.status) return;
 		cmd.ui.setStatus(composer() || null);
 	};
 
 	const refresh = (): void => {
 		// 本运行不渲染底栏（headless）就什么都别做：连 git 进程都不该起
-		if (!cmd.ui.capabilities.status) return;
+		if (!cmd.ui.capabilities?.status) return;
 		paint();
 		// 该不该真去读 git 由 readGit 的自适应闸门决定；这里只管把请求发出去
 		if (flag('git')) void readGit();
@@ -1714,7 +1739,15 @@ export default function (cmd: ModApi): void {
 			`render=${asciiOnly() ? 'ascii' : colorMode()}`,
 			`width=${terminalWidth() || t.unknown}`,
 			`cmdc=${host ?? t.unknown}${t.requires(MIN_HOST_VERSION)}`,
-			`footer=${cmd.ui.capabilities.status ? t.rendering : t.headless}`,
+			// 三态而不是两态：宿主说「不渲染」（headless）与宿主压根没有这个属性（旧宿主、
+			// 版本又没读出来——闸门放行了）是两回事，后者报成 headless 就是在撒谎
+			`footer=${
+				cmd.ui.capabilities
+					? cmd.ui.capabilities.status
+						? t.rendering
+						: t.headless
+					: t.unknown
+			}`,
 		].join(' | ');
 
 		const pad = (text: string, width: number): string => text.padEnd(width, ' ');

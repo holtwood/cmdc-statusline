@@ -17,7 +17,10 @@ export interface ModUiSelectOption {
 // 文档契约（ui.md）：TUI 里 select/input/confirm 是真弹窗；headless 下
 // confirm → false、select/input → undefined，绝不自动批准。
 export interface ModUi {
-	capabilities: {status: boolean};
+	// 可选是如实的，不是保守：1.9.0 的 ModUi 上确实没有这个属性（那一版的 setStatus 还是个
+	// 空操作），1.10.0 起才有 —— 它正是 MIN_HOST_VERSION 要守的那个依赖，也是把版本下限
+	// 定在 1.10.0 的原因。声明成必选会让调用点写出一个在旧宿主上必抛的取属性。
+	capabilities?: {status: boolean};
 	setStatus(text: string | null): Disposable;
 	notify(message: string, level?: 'info' | 'warning' | 'error' | string): void;
 	confirm(options: {title: string; message?: string}): Promise<boolean>;

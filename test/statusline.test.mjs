@@ -329,7 +329,19 @@ check(
 
 // ── runtime against a stub ModApi ───────────────────────────────────────────────────
 // answers=null 复刻 headless：select/input → undefined、confirm → false
-function makeStub({statusCapability = true, gitCode = 0, gitStdout = porcelain, env = {}, cwd = FIXTURE_CWD, answers = null} = {}) {
+//
+// flag 的语义照抄宿主（在真 host 上实测过）：声明是 per-mod 的（flagDefs），取值放在一张
+// 进程级共享表里按名字索引（values）——addFlag 写默认值先到先得，getFlag 只在「本 mod
+// 声明过这个名字」时才从共享表读。values 可注入，两个 stub 共用一张表就能复刻撞名。
+function makeStub({
+	statusCapability = true,
+	gitCode = 0,
+	gitStdout = porcelain,
+	env = {},
+	cwd = FIXTURE_CWD,
+	answers = null,
+	values = new Map(),
+} = {}) {
 	const saved = {};
 	for (const [key, value] of Object.entries(env)) {
 		saved[key] = process.env[key];
@@ -339,13 +351,15 @@ function makeStub({statusCapability = true, gitCode = 0, gitStdout = porcelain, 
 	const state = {
 		statuses: [],
 		execCalls: [],
-		flags: new Map(),
+		values,
 		flagDefs: new Map(),
 		hooks: {},
 		events: {},
 		commands: {},
 		modals: [],
 		notices: [],
+		// 测试便利：短键 -> flag 全名。宿主看到的永远是 flagName('refresh') 这种名字。
+		setFlagValue: (key, value) => void values.set(ns.flagName(key), value),
 		restore: () => {
 			for (const [key, value] of Object.entries(saved)) {
 				if (value === undefined) delete process.env[key];
@@ -357,10 +371,12 @@ function makeStub({statusCapability = true, gitCode = 0, gitStdout = porcelain, 
 		name: 'statusline',
 		cwd,
 		addFlag: (name, def) => {
-			state.flags.set(name, def.default);
+			// 先到先得：真宿主里第二个声明同名 flag 的 mod 拿不到自己的默认值
+			if (def.default !== undefined && !values.has(name)) values.set(name, def.default);
 			state.flagDefs.set(name, def);
 		},
-		getFlag: name => state.flags.get(name),
+		// 没声明过的名字一律 undefined（真宿主：e.flags.has(t) ? s.get(t) : void 0）
+		getFlag: name => (state.flagDefs.has(name) ? values.get(name) : undefined),
 		hooks: hooks => void (state.hooks = hooks),
 		on: (event, handler) => void ((state.events[event] ??= []).push(handler)),
 		addCommand: command => void (state.commands[command.name] = command.handler),
@@ -423,12 +439,12 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 {
 	const {api, state} = makeStub();
 	ns.default(api);
-	check('registers 18 flags', state.flags.size, 18);
+	check('registers 18 flags', state.flagDefs.size, 18);
 	for (const event of ['run_start', 'session_titled', 'model_request_start', 'model_request_end', 'turn_end', 'config_setting_changed'])
 		checkTrue(`registers ${event}`, Array.isArray(state.events[event]));
 	checkTrue('registers /statusline', typeof state.commands.statusline === 'function');
 
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	state.hooks.onSessionStart({source: 'startup', sessionId: 'fresh-session-id'});
 	await settle();
 	check('session start paints git + cwd only', strip(state.statuses.at(-1)), 'main ↑1↓2 │ +1 ~1 ?1 │ my-project');
@@ -461,12 +477,59 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	state.restore();
 }
 
+// ── flag 命名空间 ───────────────────────────────────────────────────────────────────
+// 宿主那张 flag 取值表是进程级共享、按名字索引的（在真 host 上实测：默认值先声明者胜，
+// --mod-option 的类型由第一个声明者决定，撞名的另一方连自己的默认值都读不到）。
+// 前缀是本 mod 唯一的防线，改回去就得先红一片。
+{
+	check('flag names carry the statusline. prefix', ns.flagName('cache'), 'statusline.cache');
+	check('the prefix is derived in one place', ns.flagName('bar-width'), 'statusline.bar-width');
+
+	const shared = new Map();
+	const {api, state} = makeStub({values: shared});
+	ns.default(api);
+	check(
+		'every registered flag is prefixed',
+		[...state.flagDefs.keys()].filter(name => !name.startsWith('statusline.')),
+		[],
+	);
+	check('the short key is not a flag name', api.getFlag('cache'), undefined);
+	check('the prefixed name is', api.getFlag(ns.flagName('cache')), true);
+
+	// stub 不是橡皮图章：两个野生 mod 声明同名 flag，后者拿不到自己的默认值（照抄宿主）
+	const foreignA = makeStub({values: shared});
+	const foreignB = makeStub({values: shared});
+	foreignA.api.addFlag('cache', {type: 'boolean', default: true});
+	foreignB.api.addFlag('cache', {type: 'boolean', default: false});
+	check('the stub models the host: first default wins', foreignB.api.getFlag('cache'), true);
+
+	// 同一个共享表里，野生 mod 的那份 cache 与本 mod 的 statusline.cache 互不相干
+	shared.set('cache', false);
+	check('a colliding foreign flag cannot reach the mod', api.getFlag(ns.flagName('cache')), true);
+}
+
+// CLI 来源列要报出 flag 全名 —— 报告和选择器用短键，命令行用带前缀的那份，两副名字得对上
+{
+	const {api, state} = makeStub();
+	ns.default(api);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('cache', false);
+	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
+	checkTrue(
+		'a CLI override is reported with its flag name',
+		/^cache\s+true\s+false\s+命令行 \(--mod-option statusline\.cache\)$/m.test(message),
+		message,
+	);
+	checkTrue('the tip names the flag spelling too', message.includes('--mod-option statusline.<键>=<值>'), message);
+	state.restore();
+}
+
 // 模型无单价/窗口 → 花费段隐藏、只留 token
 {
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('git', false);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
 	await useBaselineUsage(state, 'unknown/model-x');
 	await settle();
 	const line = strip(state.statuses.at(-1));
@@ -480,7 +543,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	useHome(fakeHome);
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	state.hooks.onSessionStart({source: 'resume', sessionId: seededSession});
 	await settle();
 	check('resume seeds title from meta.json', strip(state.statuses.at(-1)), 'Seeded Session Name │ main ↑1↓2 │ +1 ~1 ?1 │ my-project');
@@ -505,8 +568,8 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('git', false);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
 	state.hooks.onSessionStart({source: 'resume', sessionId: costSession});
 	await settle();
 	checkTrue('resumed cost seeded from transcript', strip(state.statuses.at(-1)).includes('$0.35'), strip(state.statuses.at(-1)));
@@ -551,8 +614,8 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('git', false);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
 	state.hooks.onSessionStart({source: 'resume', sessionId: tailSession});
 	await settle();
 	const line = strip(state.statuses.at(-1));
@@ -575,8 +638,8 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('git', false);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
 	state.hooks.onSessionStart({source: 'resume', sessionId: seededSession});
 	await settle();
 	await useBaselineUsage(state);
@@ -623,8 +686,8 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('git', false);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
 	state.hooks.onSessionStart({source: 'resume', sessionId: drifty});
 	await settle();
 	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
@@ -640,10 +703,10 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	ns.default(api);
 	checkTrue(
 		'flag descriptions follow config lang at registration',
-		state.flagDefs.get('model').description === 'show the active model',
-		state.flagDefs.get('model')?.description,
+		state.flagDefs.get(ns.flagName('model')).description === 'show the active model',
+		state.flagDefs.get(ns.flagName('model'))?.description,
 	);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
 	checkTrue('report renders in English', message.includes('Status line') && message.includes('Config'), message);
 	useHome(baseHome);
@@ -653,7 +716,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	// 命令行 lang=en 也能把报告切成英文（flag 描述注册已定，管不到——属已知限制）
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('lang', 'en');
+	state.setFlagValue('lang', 'en');
 	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
 	checkTrue('cli lang switches the report', message.includes('Status line'), message);
 	state.restore();
@@ -665,7 +728,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	useHome(home);
 	const {api, state} = makeStub({answers: ['用户级', 'lang', 'en', true, '完成']});
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	const message = (await state.commands.statusline({args: 'config', cwd: api.cwd, exec: api.exec, ui: api.ui}))
 		.message;
 	checkTrue('lang written through select', message.includes('lang="en"'), message);
@@ -680,12 +743,12 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	useHome(homeWith({lang: 'fr'}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
 	checkTrue('unknown lang is called out', message.includes('未知语言 "fr"'), message);
 	checkTrue('unknown lang falls back to zh', message.includes('状态栏'), message);
 	// 命令行 lang=en 压着文件里的坏值时，告警不许谎报「已按 zh 处理」
-	state.flags.set('lang', 'en');
+	state.setFlagValue('lang', 'en');
 	const overridden = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
 	checkTrue(
 		'unknown lang reports the real effective value',
@@ -700,8 +763,8 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	useHome(fakeHome);
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('git', false);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
 	state.hooks.onSessionStart({source: 'resume', sessionId: 'sess-a'});
 	await settle();
 	for (const emit of [
@@ -748,7 +811,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	state.hooks.onSessionStart({source: 'startup', sessionId: 'fresh-session-id'});
 	await settle();
 	check(
@@ -768,8 +831,8 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 {
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('git', false);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
 	await useBaselineUsage(state);
 	await settle();
 	state.events.config_setting_changed[0]({setting: 'effort', value: 'low'});
@@ -789,7 +852,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	useHome(fakeHome);
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	state.hooks.onSessionStart({source: 'resume', sessionId: 'broken-session-id'});
 	await settle();
 	check('corrupt meta.json is ignored', strip(state.statuses.at(-1)), 'main ↑1↓2 │ +1 ~1 ?1 │ my-project');
@@ -800,7 +863,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 {
 	const {api, state} = makeStub({statusCapability: false});
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	state.hooks.onSessionStart({source: 'startup'});
 	await useBaselineUsage(state);
 	await settle();
@@ -815,9 +878,9 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 {
 	const {api, state} = makeStub({gitCode: 128, gitStdout: ''});
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('model', false);
-	state.flags.set('cwd', false);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('model', false);
+	state.setFlagValue('cwd', false);
 	state.hooks.onSessionStart({source: 'startup'});
 	await settle();
 	check('non-repo paints empty → null', state.statuses.at(-1), null);
@@ -828,7 +891,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 {
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	state.hooks.onSessionStart({source: 'startup'});
 	await settle();
 	const call = state.execCalls.at(-1);
@@ -842,7 +905,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 		throw new Error('aborted');
 	};
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	await useBaselineUsage(state);
 	await settle();
 	const line = strip(state.statuses.at(-1));
@@ -875,7 +938,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 			return inner(options);
 		};
 		ns.default(api);
-		state.flags.set('refresh', '0');
+		state.setFlagValue('refresh', '0');
 		state.hooks.onSessionStart({source: 'startup', sessionId: 'fast'});
 		await settle();
 		check('fast repo reads git once at start', gitCalls, 1);
@@ -908,7 +971,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 			return inner(options);
 		};
 		ns.default(api);
-		state.flags.set('refresh', '0');
+		state.setFlagValue('refresh', '0');
 		state.hooks.onSessionStart({source: 'startup', sessionId: 'slow'});
 		await settle();
 		check('slow repo read recorded once', gitCalls, 1);
@@ -944,7 +1007,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 			return inner(options);
 		};
 		ns.default(api);
-		state.flags.set('refresh', '10');
+		state.setFlagValue('refresh', '10');
 		state.hooks.onSessionStart({source: 'startup', sessionId: 'pathological'});
 		await settle();
 		check('a pathological repo warns exactly once', state.notices.length, 1);
@@ -976,7 +1039,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 			return inner(options);
 		};
 		ns.default(api);
-		state.flags.set('refresh', '0');
+		state.setFlagValue('refresh', '0');
 		state.hooks.onSessionStart({source: 'startup', sessionId: 'no-poll'});
 		await settle();
 		check('no polling → no slow warning', state.notices.length, 0);
@@ -1000,7 +1063,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 		return {stdout: porcelain, stderr: '', code: 0};
 	};
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	state.hooks.onSessionStart({source: 'startup', sessionId: 'hanging'});
 	await settle();
 	checkTrue('a paint happens while git is still hanging', state.statuses.length > 0, JSON.stringify(state.statuses));
@@ -1028,9 +1091,9 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 {
 	const {api, state} = makeStub({env: {COLORTERM: 'truecolor'}});
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('git', false);
-	state.flags.set('ascii', true);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
+	state.setFlagValue('ascii', true);
 	await useBaselineUsage(state);
 	await settle();
 	const line = state.statuses.at(-1);
@@ -1043,8 +1106,8 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 {
 	const {api, state} = makeStub({env: {COLORTERM: 'truecolor'}});
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('git', false);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
 	await useBaselineUsage(state);
 	await settle();
 	checkTrue('truecolor env → 38;2 escapes', state.statuses.at(-1).includes('\u001b[38;2;'));
@@ -1055,8 +1118,8 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 {
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('git', false);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
 	await useBaselineUsage(state);
 	await settle();
 	state.events.config_setting_changed[0]({setting: 'model', value: 'moonshotai/Kimi-K3'});
@@ -1079,8 +1142,8 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(cfgHome);
 	const {api, state} = makeStub({cwd: cfgProject});
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('git', false);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
 	await useBaselineUsage(state);
 	await settle();
 	const line = strip(state.statuses.at(-1));
@@ -1096,9 +1159,9 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	const cli = makeStub({cwd: cfgProject});
 	useHome(cfgHome);
 	ns.default(cli.api);
-	cli.state.flags.set('refresh', '0');
-	cli.state.flags.set('git', false);
-	cli.state.flags.set('speed', false);
+	cli.state.setFlagValue('refresh', '0');
+	cli.state.setFlagValue('git', false);
+	cli.state.setFlagValue('speed', false);
 	await useBaselineUsage(cli.state);
 	await settle();
 	checkTrue('cli flag beats config (speed off)', !strip(cli.state.statuses.at(-1)).includes('tok/s'), strip(cli.state.statuses.at(-1)));
@@ -1110,8 +1173,8 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 {
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('git', false);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
 	await useBaselineUsage(state);
 	await settle();
 	const before = strip(state.statuses.at(-1));
@@ -1134,7 +1197,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(homeWith({preset: 'minimal'}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	await useBaselineUsage(state);
 	await settle();
 	check(
@@ -1149,7 +1212,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(homeWith({preset: 'usage'}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	await useBaselineUsage(state);
 	await settle();
 	check(
@@ -1164,7 +1227,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(homeWith({preset: 'minimal', cost: true}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	await useBaselineUsage(state);
 	await settle();
 	checkTrue(
@@ -1179,8 +1242,8 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	// 没有配置文件，预设只能从命令行来
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('preset', 'minimal');
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('preset', 'minimal');
 	await useBaselineUsage(state);
 	await settle();
 	checkTrue('cli preset beats the built-in default', !strip(state.statuses.at(-1)).includes('$'), strip(state.statuses.at(-1)));
@@ -1192,7 +1255,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(homeWith({preset: 'nope'}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	await useBaselineUsage(state);
 	await settle();
 	checkTrue('unknown preset falls back to full', strip(state.statuses.at(-1)).includes('$0.0038'), strip(state.statuses.at(-1)));
@@ -1204,7 +1267,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(homeWith({speedd: false, cache: 'yes', preset: 'nope'}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
 	checkTrue('report lists the key table', message.includes('配置（键 / 默认 / 生效 / 来源）'), message);
 	checkTrue('report points at unknown key (typo)', message.includes('未知键 "speedd"（用户）'), message);
@@ -1230,7 +1293,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(homeWith({preset: 'minimal'}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
 	checkTrue('preset-disabled key reported as 预设 minimal', /^cache\s+true\s+false\s+预设 minimal$/m.test(message), message);
 	checkTrue('preset-enabled key reported as 内置默认', /^model\s+true\s+true\s+内置默认$/m.test(message), message);
@@ -1243,7 +1306,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(homeWith({'bar-width': 100}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	await useBaselineUsage(state);
 	await settle();
 	const cells = (strip(state.statuses.at(-1)).match(/[█░]/g) ?? []).length;
@@ -1258,7 +1321,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(homeWith({preset: 'Minimal'}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	await useBaselineUsage(state);
 	await settle();
 	checkTrue('preset case is ignored', !strip(state.statuses.at(-1)).includes('$'), strip(state.statuses.at(-1)));
@@ -1276,7 +1339,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(home);
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	check('loadConfig reports the broken file', ns.loadConfig(FIXTURE_CWD).broken.length, 1);
 	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
 	checkTrue('broken file marked as 读不动', message.includes('（读不动）'), message);
@@ -1314,7 +1377,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(home);
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	await useBaselineUsage(state);
 	await settle();
 	const line = strip(state.statuses.at(-1));
@@ -1334,7 +1397,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(userHome);
 	const {api, state} = makeStub({cwd: projectHome});
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	const message = (await state.commands.statusline({args: '', cwd: projectHome, exec: api.exec})).message;
 	checkTrue('project-level key reported as 项目', /^cwd\s+true\s+true\s+项目$/m.test(message), message);
 	checkTrue('user-level key reported as 用户', /^speed\s+true\s+false\s+用户$/m.test(message), message);
@@ -1347,7 +1410,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(home);
 	const {api, state} = makeStub({answers: ['用户级', 'speed', '关', true, '完成']});
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	await useBaselineUsage(state);
 	await settle();
 	checkTrue('speed on before the flow', strip(state.statuses.at(-1)).includes('tok/s'));
@@ -1377,7 +1440,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(home);
 	const {api, state} = makeStub({cwd: uiProject, answers: ['项目级', 'preset', 'minimal', true, '完成']});
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	await useBaselineUsage(state);
 	await settle();
 	const message = (await state.commands.statusline({args: 'config', cwd: api.cwd, exec: api.exec, ui: api.ui}))
@@ -1398,7 +1461,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(home);
 	const {api, state} = makeStub({answers: ['用户级', 'bar-width', '8', true, '完成']});
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	await useBaselineUsage(state);
 	await settle();
 	const beforeWidth = visibleLength(strip(state.statuses.at(-1)));
@@ -1437,7 +1500,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(home);
 	const {api, state} = makeStub({answers: ['用户级', 'cwd', '关', false, '完成']});
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	const message = (await state.commands.statusline({args: 'config', cwd: api.cwd, exec: api.exec, ui: api.ui}))
 		.message;
 	checkTrue('declined write changes nothing', message.includes('没有改动'), message);
@@ -1454,7 +1517,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	delete api.ui.input;
 	delete api.ui.confirm;
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	let message;
 	try {
 		message = (await state.commands.statusline({args: 'config', cwd: api.cwd, exec: api.exec, ui: api.ui}))
@@ -1473,7 +1536,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(home);
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	const message = (await state.commands.statusline({args: 'config', cwd: api.cwd, exec: api.exec, ui: api.ui}))
 		.message;
 	checkTrue('headless flow refuses to write', message.includes('需要 TUI'), message);
@@ -1505,7 +1568,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 
 	const {api, state} = makeStub();
 	ns.default(api);
-	check('outdated host: no flags registered', state.flags.size, 0);
+	check('outdated host: no flags registered', state.flagDefs.size, 0);
 	check('outdated host: no commands registered', Object.keys(state.commands).length, 0);
 	check('outdated host: nothing painted', state.statuses.length, 0);
 	check('outdated host: no hooks registered either', state.hooks.onSessionStart, undefined);
@@ -1523,7 +1586,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	writeFileSync(join(cliRoot, 'package.json'), JSON.stringify({name: 'command-code', version: '1.10.0'}));
 	const atFloor = makeStub();
 	ns.default(atFloor.api);
-	check('the floor version itself is supported', atFloor.state.flags.size, 18);
+	check('the floor version itself is supported', atFloor.state.flagDefs.size, 18);
 	check('the floor version gets no upgrade notice', atFloor.state.notices.length, 0);
 	check('the floor version registers the command', typeof atFloor.state.commands.statusline, 'function');
 	process.argv[1] = argv1;
@@ -1534,7 +1597,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	check('unknown host version produces no notice', fresh.state.notices.length, 0);
 	checkTrue(
 		'unknown host version still registers everything',
-		fresh.state.flags.size === 18 && typeof fresh.state.commands.statusline === 'function',
+		fresh.state.flagDefs.size === 18 && typeof fresh.state.commands.statusline === 'function',
 	);
 	checkTrue(
 		'unknown host version is reported as 未知',
@@ -1549,7 +1612,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	const {api, state} = makeStub();
 	for (const method of ['select', 'input', 'confirm']) delete api.ui[method];
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	const message = (await state.commands.statusline({args: 'config', cwd: api.cwd, exec: api.exec, ui: api.ui}))
 		.message;
 	checkTrue('missing modal API does not throw', message.startsWith('交互式配置需要 TUI'), message);
@@ -1574,7 +1637,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	writeFileSync(join(cliRoot, 'package.json'), JSON.stringify({name: 'command-code', version: ''}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	check('a blank version does not disable the mod', state.flags.size, 18);
+	check('a blank version does not disable the mod', state.flagDefs.size, 18);
 	check('a blank version produces no upgrade notice', state.notices.length, 0);
 	check('a blank version does not throw', typeof state.commands.statusline, 'function');
 	process.argv[1] = argv1;
@@ -1586,12 +1649,17 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(home);
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('preset', 'minimal');
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('preset', 'minimal');
 	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
 	checkTrue('no false "all built-in defaults" claim', !message.includes('全部走内置默认'), message);
 	checkTrue('the note points at the source column instead', message.includes('逐行看「来源」列'), message);
-	checkTrue('a cli preset is reported as 命令行', /^preset\s+full\s+minimal\s+命令行$/m.test(message), message);
+	// 来源列报的是 flag 全名：报告表里的键是短名，命令行上写的是 statusline. 前缀那份
+	checkTrue(
+		'a cli preset names the prefixed flag',
+		/^preset\s+full\s+minimal\s+命令行 \(--mod-option statusline\.preset\)$/m.test(message),
+		message,
+	);
 	useHome(baseHome);
 }
 
@@ -1614,7 +1682,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(homeWith({preset: 123}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
 	checkTrue('numeric preset is refused', message.includes('"preset" 的取值不可用：期望 字符串'), message);
 	checkTrue('numeric preset falls back instead of being echoed', /^preset\s+full\s+full\s+内置默认$/m.test(message), message);
@@ -1626,8 +1694,8 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(homeWith({preset: 'nope'}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	state.flags.set('refresh', '0');
-	state.flags.set('preset', 'minimal');
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('preset', 'minimal');
 	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
 	checkTrue('unknown preset names the one actually in effect', message.includes('当前生效的是 preset=minimal'), message);
 	checkTrue('unknown preset does not claim a wrong fallback', !message.includes('已按 full 处理'), message);
@@ -1639,7 +1707,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(homeWith({'bar-width': 100}));
 	const {api, state} = makeStub({answers: ['用户级', '完成']});
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	await useBaselineUsage(state);
 	await settle();
 	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
@@ -1662,7 +1730,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(userHome);
 	const {api, state} = makeStub({cwd: pinned, answers: ['用户级', 'cost', '关', true, '完成']});
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	const message = (await state.commands.statusline({args: 'config', cwd: api.cwd, exec: api.exec, ui: api.ui}))
 		.message;
 	check('shadowed write still lands in the user file', JSON.parse(readFileSync(join(userHome, '.commandcode', 'statusline.json'), 'utf8')), {cost: false});
@@ -1676,7 +1744,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(home);
 	const {api, state} = makeStub({answers: ['用户级', 'cost', '关', true, '完成']});
 	ns.default(api);
-	state.flags.set('refresh', '0');
+	state.setFlagValue('refresh', '0');
 	const message = (await state.commands.statusline({args: 'config', cwd: api.cwd, exec: api.exec, ui: api.ui}))
 		.message;
 	checkTrue('a clean write is not reported as shadowed', !message.includes('盖住'), message);
@@ -1691,6 +1759,11 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	// 九种语言挤在一个 README 里，任何一个漏掉这一段都算漂
 	const stale = readme.split(`≥ ${ns.MIN_HOST_VERSION}`).length - 1;
 	check('every language section states the host floor', stale, 9);
+
+	// flag 前缀同理：九份语言的配置块都要写带前缀的全名，而且不许留下没前缀的老写法
+	const prefixed = readme.split(`--mod-option ${ns.flagName('<')}`).length - 1;
+	check('every language section documents the flag prefix', prefixed, 9);
+	checkTrue('no unprefixed --mod-option example survives', !readme.includes('--mod-option <'));
 }
 
 const total = passed + failures.length;
