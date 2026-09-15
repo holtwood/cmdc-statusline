@@ -8,7 +8,11 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 const MOD_PATH =
 	process.env.STATUSLINE_MOD ?? fileURLToPath(new URL('../index.ts', import.meta.url));
 
-const FIXTURE_CWD = '/tmp/statusline-fixture/my-project';
+// fixture 工作目录必须是「每次运行现造」的：写成固定路径的话，任何一次残留（曾经真发生过 ——
+// 一条用例往这里写过 statusline.json）都会污染之后所有运行，因为默认 stub 的 cwd 就是它。
+// 父目录唯一、basename 仍叫 my-project，好让那些断言渲染结果的用例不必改。
+const FIXTURE_CWD = join(mkdtempSync(join(tmpdir(), 'statusline-fixture-')), 'my-project');
+mkdirSync(FIXTURE_CWD, {recursive: true});
 
 let passed = 0;
 const failures = [];
