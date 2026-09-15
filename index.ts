@@ -787,13 +787,15 @@ export function writeConfigKey(path: string, key: string, value: unknown): void 
 	writeFileSync(path, `${JSON.stringify(current, null, 2)}\n`, 'utf8');
 }
 
-// 下限是查出来的，不是拍脑袋定的：逐个抓 npm 上每个 1.x 版本的 dist/cli.mjs 比对过。
+// 下限是查出来的，不是拍脑袋定的：抓 npm 上相邻两版的 dist/cli.mjs 直接比对
+// （1.9.0 / 1.10.0），再在 1.20 / 1.30 / 1.40 / 1.50 / 1.54 上复验。
 // 最晚出现的依赖是 cmd.ui.capabilities —— mod 靠它判断这个宿主到底渲不渲染底栏。
 // 1.9.0 的 ModUi 上还没有这个属性（该版本里 capabilities 只出现在 MCP 协议与提示词文本中），
 // 于是 cmd.ui.capabilities.status 会直接抛 TypeError：不是降级，是崩。1.10.0 起才有。
-// 其余依赖在 1.10.0 及以后都一致：select/input/confirm 对话框（1.0.0 起就有）、
-// subagent_stop / session_titled / config_setting_changed 事件、model_request_end 上的 effort、
-// transcript 行尾的 "usage"…"model"…"effort" 形状、exec 的 signal、run_start 的 sessionId。
+// 其余依赖（对话框、subagent_stop / session_titled / config_setting_changed 事件、
+// model_request_end 上的 effort、transcript 行尾形状、exec 的 signal、run_start 的 sessionId）
+// 在 1.10.0 上已全部存在；且 ModUi 的 confirm/select/input/capabilities 实现（把压缩后的
+// 标识符名归一化后）在 1.10.0 与 1.54.0 上完全相同 —— 不只是「在」，语义也不随版本漂。
 export const MIN_HOST_VERSION = '1.10.0';
 
 // 宿主版本：cmd 的表面没有任何 version 字段（探针实测 cmd 的键里没有），只能从 CLI 入口旁边的

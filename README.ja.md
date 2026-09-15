@@ -2,87 +2,54 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | **日本語** | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Русский](README.ru.md)
 
-> この翻訳は AI が作成したものです。解釈が分かれる場合は [英語版](README.md) を優先します。修正の PR を歓迎します。
-
 [Command Code](https://commandcode.ai)（`cmd`、Windows では `cmdc`）のステータスライン — モデル、
-グラデーション付きのコンテキストバー、キャッシュヒット率、セッション費用、出力速度、サブエージェント
-使用量、セッション名、git の状態を、入力欄の下の 1 行にまとめて表示します。
+グラデーション付きコンテキストバー、キャッシュヒット率、セッション費用、出力速度、サブエージェント
+使用量、セッション名、git の状態を `cmd.ui.setStatus()` で入力欄の下に表示します。
 
 ```text
 deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
 ```
 
-Command Code には Claude Code のような `statusLine` 外部コマンドフックがありません。入力欄の下に
-常駐行を描画できるのは `cmd.ui.setStatus()`（mod API）だけであり、本 mod はそれを使っています。
-
-## 動作要件
-
-**Command Code ≥ 1.10.0**（Windows では `cmdc`）が必要です。**古いビルドは非対応**です: 古いホストを
-検出すると本 mod は何もしません — 何も登録せず、フッターも描かず、フィードにアップグレードの通知を
-1 件残して自分を無効化します。`cmdc update` を実行し、セッションを開き直してください。この下限は
-推測ではありません: 1.10.0 より前の mod API には `cmd.ui.capabilities` が無く（公開済みの 1.x パッケージを
-すべて照合）、ホストがフッターを描くのかすら判定できないため、降格ではなく例外になります。
-`/statusline` のレポートには検出したホストのバージョンが出るので、何に対して動いているか確認できます。
+**Command Code ≥ 1.10.0 が必要。** 古いホストではアップグレード通知を 1 件残して自分を無効化
+します——`cmdc update` してセッションを開き直してください。
 
 ## インストール
 
 ```bash
-cmd mods add cmdc-statusline -g              # npm から（-g = ユーザースコープ。外すと現在のプロジェクトのみ）
-cmd mods list                                # 一覧に表示されれば OK
+cmd mods add cmdc-statusline -g   # -g = ユーザースコープ。外すと現在のプロジェクトのみ
+cmd mods list
 ```
 
-同じパッケージは git からも入れられます: `cmd mods add holtwood/cmdc-statusline -g`（レジストリに
-依存したくない場合）。
+ほかの方法：
 
-パッケージ管理を使わずファイルを直接置くこともできます——`index.ts` を
-`~/.commandcode/mods/statusline.ts`（Windows では `%USERPROFILE%\.commandcode\mods\statusline.ts`）
-に置き、新しいセッションを開いてください:
+- **git から:** `cmd mods add holtwood/cmdc-statusline -g`
+- **単一ファイル:** `index.ts` を `~/.commandcode/mods/statusline.ts` に置く
+  （Windows では `%USERPROFILE%\.commandcode\mods\statusline.ts`）——ビルド不要
+- **試すだけ:** `cmd --mod ./index.ts`（mod は 1 プロセスにつき 1 回だけ読み込まれます。
+  変更後は `/reload` で反映）
 
-```bash
-mkdir -p ~/.commandcode/mods && curl -o ~/.commandcode/mods/statusline.ts \
-  https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
-```
+Windows ではコマンドは `cmdc` です（`cmd` は Windows のシェル）。導入方法はどれか 1 つに——
+パッケージと直接配置は別々の mod で同じ flag 名を宣言し、flag 名は mod をまたいでグローバルに
+解決されます。
 
-```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.commandcode\mods" | Out-Null
-Invoke-WebRequest -OutFile "$env:USERPROFILE\.commandcode\mods\statusline.ts" `
-  https://raw.githubusercontent.com/holtwood/cmdc-statusline/main/index.ts
-```
+AI エージェントに任せる場合、次を貼ってください:
 
-導入方法はどちらか一方にしてください: パッケージと直接配置は別々の mod で、同じ flag 名を宣言します。
-flag 名は mod をまたいでグローバルに解決されます。
-
-> Windows ではコマンドは `cmdc` です（`cmd` は Windows のシェル）——`cmdc mods add …`、`cmdc mods list`、`cmdc --mod .\index.ts` と読み替えてください。
-
-インストールせずに試す: `cmd --mod ./index.ts`。mod は 1 プロセスにつき 1 回だけ読み込まれます。
-変更後は `/reload` か新しいセッションで反映してください。ビルド手順は不要です（Command Code が
-読み込み時に TypeScript をコンパイルします）。
-
-### AI エージェントに任せる
-
-自分でコマンドを打ちたくない場合は、以下をエージェント（Claude Code、Codex、Command Code など）に
-貼り付けてください:
-
-> Command Code の mod `cmdc-statusline` をユーザースコープで入れてください:
-> `cmd mods add cmdc-statusline -g` を実行（Windows では `cmd` の代わりに `cmdc`。npm で見つからない
-> 場合は `holtwood/cmdc-statusline` を使用）、その後 `cmd mods list` で `cmdc-statusline` が
-> ユーザースコープとして表示され、読み込み警告がないことを確認してください。最後に、フッターを表示
-> させるためにセッションの再起動を促してください。
-
-root は不要で、書き込まれるのは `~/.commandcode/mods/` と `~/.commandcode/settings.json` の
-`mods.sources` だけです。
+> Command Code の mod `cmdc-statusline` をユーザースコープでインストールして:
+> `cmd mods add cmdc-statusline -g` を実行（Windows では `cmdc`。npm に無ければ
+> `holtwood/cmdc-statusline` を使う）。`cmd mods list` に出ることを確認したら、セッションを
+> 再起動するよう伝えて。
 
 ## セグメント
 
 | セグメント | 意味 |
 |---|---|
-| `deepseek-v4.1-flash` | 現在のモデル（リクエストから取得。`raw-model=true` でベンダー接頭辞を保持） |
+| `deepseek-v4.1-flash` | 現在のモデル（`raw-model=true` でベンダー接頭辞を保持） |
 | `max` | 直前のリクエストの推論エフォート |
-| `█░░░ 32k (3.2%)` | 直前のリクエストのコンテキスト：グラデーションバー（位置に応じて緑→黄→赤）、トークン数、ウィンドウ占有率 |
-| `cache 99%` | 直前のリクエストのプロンプトキャッシュヒット率（キャッシュ読み ÷ 入力） |
-| `$0.013` | セッション費用 — 再開時の履歴累計 + このプロセスでの増分 |
-| `42 tok/s` | 直前のリクエストの出力速度（実時間計測なので初トークン待ちを含む） |
-| `sub 16k` | このセッションでサブエージェント（`agent` ツール）が消費したトークン |
+| `█░░░ 32k (3.2%)` | 直前のリクエストのコンテキスト：グラデーションバー（緑→赤）、トークン数、ウィンドウ占有率 |
+| `cache 99%` | 直前のリクエストのプロンプトキャッシュヒット率 |
+| `$0.013` | セッション費用 — 再開時の累計 + 新規リクエスト分 |
+| `42 tok/s` | 直前のリクエストの出力速度（実時間計測、初トークン待ちを含む） |
+| `sub 16k` | このセッションでサブエージェントが消費したトークン |
 | `Simple Reply` | セッション名（`/reload` や再開後も保持） |
 | `main ↑1` | git ブランチと ahead/behind |
 | `+1 ~2 ?1` | ステージ済み · 変更 · 未追跡（クリーンなら `clean`） |
@@ -90,143 +57,84 @@ root は不要で、書き込まれるのは `~/.commandcode/mods/` と `~/.comm
 
 ## 設定
 
-設定は JSON。コマンドラインで実行ごとに上書きできます。
-
 ```
 ~/.commandcode/statusline.json          ユーザースコープ
-<project>/.commandcode/statusline.json  プロジェクトスコープ（ユーザーより優先）
---mod-option <name>=<value>             実行ごとの上書き
+<プロジェクト>/.commandcode/statusline.json  プロジェクトスコープ（ユーザーを上書き）
+--mod-option <キー>=<値>                 実行ごとの上書き
 ```
 
 ```json
-{
-	"bar-width": 12,
-	"cache": true,
-	"cost": true,
-	"speed": true,
-	"sub": true,
-	"cwd": true,
-	"refresh": 10
-}
+{"preset": "full", "bar-width": 12, "refresh": 10, "cache": true, "cost": true}
 ```
 
-`preset` は決め打ちのセグメント構成で、十数個のキーを並べずに済みます:
-
-| `preset` | 有効になるセグメント |
-|---|---|
-| `full`（既定） | すべて |
-| `minimal` | `model` `effort` `context` `bar` `percent` `git` |
-| `usage` | `context` `bar` `percent` `cache` `cost` `sub` |
-
-プリセットが決めるのは「どのセグメントを出すか」だけです。隣に書いたキーがそれを上書きし
-（`{"preset": "minimal", "cost": true}` ならコストも出ます）、描画スイッチ（`ascii`、`raw-model`）は
-直交します。未知のプリセット名はレポートで指摘され、`full` として扱われます。
+プリセット: `full`（既定、すべて）· `minimal`（model, effort, context, bar, percent, git）·
+`usage`（context, bar, percent, cache, cost, sub）。プリセットと並べて書いたキーはそれを上書き
+します。
 
 | キー | 既定 | 説明 |
 |---|---|---|
-| `model`, `effort`, `context` | `true` | モデル / 推論エフォート / 直前のコンテキスト |
+| `model`, `effort`, `context` | `true` | モデル / 推論エフォート / 直前のリクエストのコンテキスト |
 | `bar`, `bar-width`, `percent` | `true`, `12`, `true` | グラデーションバー、セル数、割合 |
-| `cache` | `true` | キャッシュヒット率 |
-| `cost` | `true` | セッション費用 |
-| `speed` | `true` | 出力速度 |
-| `sub` | `true` | サブエージェントのトークン |
-| `name` | `true` | セッション名（24 文字で切り詰め） |
-| `git` | `true` | ブランチ + 変更数 |
-| `cwd` | `true` | ディレクトリ名 |
+| `cache`, `cost`, `speed`, `sub` | `true` | ヒット率 / セッション費用 / 出力速度 / サブエージェントのトークン |
+| `name`, `git`, `cwd` | `true` | セッション名（24 文字で切り詰め）/ ブランチ + 変更数 / ディレクトリ名 |
 | `preset` | `full` | `full` / `minimal` / `usage` |
-| `raw-model` | `false` | モデル id のベンダー接頭辞を保持 |
-| `ascii` | `false` | 純 ASCII 描画を強制 |
-| `refresh` | `10` | git を読み直す間隔（秒、0 でタイマー停止） |
+| `raw-model`, `ascii` | `false` | ベンダー接頭辞を保持 / 素の ASCII 描画 |
+| `refresh` | `10` | git を再読み込みする間隔（秒）（`0` でポーリング停止） |
 
-### 実際に効いている値を見る
+JSON を触らずに確認・変更できるコマンドが 2 つあります:
 
-`/statusline` は描画された 1 行とその背後の生値に加えて、全キーの「キー / 既定 / 有効値 / 由来」表、
-読み込んだ設定ファイル、そして使えなかったもの — 知らないキー（多くは打ち間違い）、形の合わない値、
-未知のプリセット — を 1 行ずつ出力します。拒否された値は既定へ戻り、その旨が明示されるので、
-変更が効かない理由を推測させられません。
+- `/statusline` — 描画行、元の値、全キーの「キー / 既定 / 有効 / 出どころ」表に加え、使えなかった
+  項目（未知のキー、型違い、不明なプリセット）を 1 件ずつ警告します。（レポート文は中国語です。）
+- `/statusline config` — ダイアログ式の編集（スコープ → キー → 値 → 確認）。1 キーだけ書き込み、
+  `/reload` なしで即座に再描画します。
 
-### JSON を手で書かずに変える
+注意: `--mod-option` は値が組み込み既定と異なる場合にだけ明示的な上書きと見なされます——
+`cwd=true` を明示しても `false` と書かれた設定ファイルには勝てません。
 
-`/statusline config` は Command Code のダイアログ（`cmd.ui.select` / `input` / `confirm`）で同じことを
-行います: スコープ（ユーザー / プロジェクト）→ キー → 値 → 確認。書き換えるのはその 1 キーだけで、
-ファイルの残り（この mod が知らないキーも含めて）はそのまま残し、その後で設定を読み直してフッターを
-**即座に再描画**します。`/reload` は不要です。ダイアログが無い実行（headless）はレポートを出すだけで
-何も書きませんし、確認を断った場合も同様です。書き込んだ値がより優先度の高いもの（プロジェクト側の
-ファイルや `--mod-option`）に覆われてフッターが変わらない場合は、その旨をはっきり伝えます —
-「書き込みました」と言われたのに画面が変わらない、という状態を残しません。
+## 仕組み
 
-（`/statusline` 自身の出力メッセージは中国語です。）
-
-**優先順位の注意:** Command Code は `--mod-option` の**値**を mod から見える argv から消して
-しまいます。そのため、**組み込みの既定値と異なる**場合だけ明示的な上書きとみなします。
-既定値を明示的に渡しても（例 `--mod-option cwd=true`）設定ファイルには勝ちません。
-
-## 描画
-
-- **起動時。** ほとんどのセグメントは**直前のモデルリクエスト**を表すもので、まだ一度も送っていない
-  セッションには存在しません。そこで最初の `model_request_end` を待たず、その時点で分かるものを描き
-  ます——モデルと推論エフォートは `~/.commandcode/config.json` から、加えてセッション名・git の状態・
-  ディレクトリ名です。**レジューム**したセッションでは、直前リクエストのモデル・effort・コンテキスト・
-  キャッシュヒット率・コストも transcript から復元するため、閉じたときと同じ完全な 1 行で開きます。
-  リクエストが必須なのは出力速度とサブエージェントのトークンだけです（どちらも製品側が保存しません）。
-- `COLORTERM=truecolor|24bit` → 24-bit のグラデーションバー。それ以外は 256 色で近似。
-  `ascii=true` または `TERM=dumb` → `#`/`-`。`NO_COLOR` はブロック文字を保ち色だけ落とします。
-- **狭い端末でも切り捨てません。** 優先度順にセグメントを落とし（`cwd` → 速度 → effort →
-  サブエージェント → キャッシュ → セッション名 → 費用 → 変更数、続いてコンテキストが
-  バー → トークン+% → トークン と縮小、最後にブランチ）、リサイズ時は即座に再描画します。
-  モデルは決して落としません。
-
-## 数値の出どころ
-
-| 値 | 出典 | 信頼度 |
-|---|---|---|
-| モデル / effort / コンテキスト / キャッシュ | `model_request_start` / `model_request_end` イベント（初回リクエスト前の model/effort は `~/.commandcode/config.json` から、レジューム時は transcript から） | リクエスト後は正確。シード値は製品自身の値 |
-| セッション費用 | 再開時に `<sessionId>.jsonl` の `costUsd` を合計 + 各リクエストを内蔵価格表で計算 | 再開分は製品自身の数値。増分は製品の計算方法を再現（記録済み `costUsd` と全件照合） |
-| サブエージェントのトークン | `subagent_stop` イベント | トークンは正確。サブエージェント費用は費用セグメントに**含めません**（製品も保存しないため） |
-| セッション名 | `session_titled` イベント + 起動時に `<sessionId>.meta.json` | ベストエフォート — ファイル配置は非公開仕様で、読み取りは `try` 内 |
-| ブランチ / 変更数 | `cmd.exec` で `git status --porcelain=v1 -b` | 正確、5 秒キャッシュ |
-
-コンテキスト窓と価格の表は CLI 同梱のモデルカタログから**生成**されます（手書きではありません）。
-
-```bash
-python3 scripts/gen-model-tables.py           # CLI 更新後に再生成
-python3 scripts/gen-model-tables.py --check   # 表がずれていれば失敗（CI で実行）
-```
-
-表にないモデルでも安全に劣化します。ウィンドウが無ければバー/割合を出さず、価格が無ければ費用を出しません。
+- **起動/再開:** 最初のリクエスト前はモデルとエフォートを `~/.commandcode/config.json` から
+  取得。再開セッションは transcript からコンテキスト・キャッシュ率・費用も復元します。出力速度と
+  サブエージェントのトークンだけは実際のリクエストが必要です。
+- **色:** `COLORTERM=truecolor|24bit` → 24-bit グラデーション、それ以外は 256 色近似。
+  `ascii=true` または `TERM=dumb` → `#`/`-`。`NO_COLOR` はブロック文字を残して色だけ消します。
+- **狭い端末:** 切り詰めずに優先度の低いセグメントから落とします（cwd → 速度 → effort →
+  サブエージェント → キャッシュ → 名前 → 費用 → 変更数 → バー縮小 → ブランチ）。モデルは
+  落としません。リサイズで再描画。
+- **出どころ:** モデル/エフォート/コンテキスト/キャッシュはリクエストイベントから。費用 =
+  再開時の transcript + 生成済み価格表によるリクエストごとの課金。サブエージェントのトークンは
+  `subagent_stop` から。git は `git status --porcelain=v1 -b`（5 秒キャッシュ + `refresh` 間隔）。
+- **モデル表:** コンテキストウィンドウと価格は CLI 同梱のモデルカタログから**生成**されます——
+  `python3 scripts/gen-model-tables.py` で再生成、`--check` でドリフト検出（CI が実行）。
+  表に無いモデルは穏やかに縮退します（バー無し / 費用無し）。
 
 ## 開発
 
 ```bash
-node test/statusline.test.mjs     # スイート全体: 依存ゼロ・ビルド不要
+npm test                                    # node test/statusline.test.mjs —— 依存なし・ビルド不要
 python3 scripts/gen-model-tables.py --check
 ```
 
-テストは `index.ts` を直接読み込みます。Node 22.18+/24 が型を除去するためツールチェーンは不要です。
-別のコピーをテストするには `STATUSLINE_MOD=/path/to/statusline.ts`。CI は Linux・macOS・Windows で
-同じスイートを実行します。
+Node 22.18+/24 がインポート時に TypeScript の型を剥がすので、テストは `index.ts` を直接実行します。
+`STATUSLINE_MOD=/path/to/statusline.ts` で別コピーを対象にできます。CI は Linux / macOS /
+Windows をカバー。
 
 ## 既知の制限
 
-- **クレジット/クォータのセグメントはありません。** 同種の mod は Command Code API から残量や
-  5 時間/週次のウィンドウを取得しますが、本 mod は意図的にローカルのみ（ネットワークも
+- クレジット/クォータのセグメントはありません——意図的にローカルのみ（ネットワーク不使用、
   `auth.json` も触りません）。
-- 新規リクエストの費用は同梱の価格表から計算するため、価格改定時は
-  `scripts/gen-model-tables.py` の再実行が必要です（再開時のシードと各リクエストの計算はいずれも
-  製品自身の数値と照合済み）。
-- セッション名と費用の復元は `~/.commandcode/projects/**`、起動時のモデル/effort のシードは
-  `~/.commandcode/config.json`（いずれも非公開の配置）を読みます。すべてフォールバック付きなので、
-  配置が変わっても「セグメントが消える」だけでクラッシュしません。
-- **巨大リポジトリでのポーリング。** フッターは `refresh` 秒ごと（既定 10 秒）に `git status` を
-  読み直します。小さいリポジトリでは無視できるコストですが、巨大なものではそうではありません。
-  `refresh` を上げるか `0` にして、イベント駆動の更新に任せてください。
+- 新規リクエストの費用は同梱の価格表で計算します。CLI 側の価格変更には
+  `gen-model-tables.py` の再実行が必要です。
+- セッション名・費用・リクエスト復元は未文書化の `~/.commandcode/**` レイアウトを読みます——
+  レイアウト変更があっても「セグメントが消える」だけで、落ちることはありません。
+- `git status` を `refresh` 秒ごとにポーリングします——小さなリポジトリでは安いですが、巨大な
+  リポジトリでは `refresh` を上げるか `0` にしてください。
 
 ## 類似プロジェクト
 
-別のテイストが欲しければ: [grknbyk/commandcode-statusline](https://github.com/grknbyk/commandcode-statusline)
-（クレジット、利用ウィンドウ、消費ペース）、[vikas-gits-good/cmd-statusline](https://github.com/vikas-gits-good/cmd-statusline)
-（テンプレートレイアウト、狭い端末の優先度処理）、[estifie/command-code-mod-session-stats](https://github.com/estifie/command-code-mod-session-stats)
-（コンテキスト圧、キャッシュヒット率、transcript 由来の費用とサブエージェント換算）。
+[grknbyk/commandcode-statusline](https://github.com/grknbyk/commandcode-statusline)（クレジット、利用ウィンドウ、消費ペース）·
+[vikas-gits-good/cmd-statusline](https://github.com/vikas-gits-good/cmd-statusline)（テンプレートレイアウト、狭い端末の優先度処理）·
+[estifie/command-code-mod-session-stats](https://github.com/estifie/command-code-mod-session-stats)（コンテキスト圧、キャッシュヒット率、transcript 由来の費用）。
 
 ## ライセンス
 

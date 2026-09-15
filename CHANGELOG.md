@@ -54,8 +54,9 @@
   - Stale comments: the one on `MIN_HOST_VERSION` still described the degrade behavior that the hard
     gate replaced, and the file header never mentioned that older hosts are unsupported at all.
 - The supported-version floor is now **researched, not guessed**. `MIN_HOST_VERSION` was `1.54.0`
-  only because that is what happened to be installed; every published 1.x `dist/cli.mjs` was fetched
-  from the registry and checked for each API and data shape this mod touches:
+  only because that is what happened to be installed; the published `dist/cli.mjs` of the two
+  releases around the boundary (1.9.0 / 1.10.0) was fetched and compared directly, then re-checked
+  at 1.20 / 1.30 / 1.40 / 1.50 / 1.54 for every API and data shape this mod touches:
   - mod dialogs `cmd.ui.confirm` / `select` / `input` — present since **≤ 1.0.0**
   - `cmd.ui.refreshWidgets` — since 1.5.0
   - **`cmd.ui.capabilities` — first present in 1.10.0.** 1.9.0 has no such property on the ModUi
@@ -67,11 +68,17 @@
   - the transcript tail the seeding regex matches (`…"usage":{…},"model":"…","effort":"…"}`) — the
     writer is byte-for-byte the same shape from 1.10.0 through 1.54.0
   - `exec`'s `signal` and `run_start.sessionId` — already present in 1.9.0
+  - the ModUi implementations of `confirm` / `select` / `input` / `capabilities` are **identical at
+    1.10.0 and 1.54.0 once the minified identifier names are normalised away** (also compared at
+    1.30.0), i.e. the contracts this mod codes against — select returns the chosen label, input the
+    typed text, confirm a boolean, `capabilities.status` a boolean getter — do not drift across the
+    supported range, not merely the symbols
   → `MIN_HOST_VERSION` is **`1.10.0`**, one release above the point where the mod would crash rather
   than work. Stated plainly: the mod has only ever been *run* on 1.54.0, so 1.10.0–1.53.x is
   supported on the strength of that inspection; a break there would cost a missing segment, not a
-  crash. The nine READMEs now carry the same number and the same reasoning.
-- `flag()` lost its dead `fallback` parameter: all fifteen call sites passed a built-in default that
+  crash. The nine READMEs carry the same floor; the reasoning behind it lives here and in the
+  `MIN_HOST_VERSION` comment, not in the READMEs (they state the requirement in one line).
+- `flag()` lost its dead `fallback` parameter: all sixteen call sites passed a built-in default that
   `resolveFlag()` always overrode, so "the" default had two places to live.
 - Suite: 261 checks, including the write path against a throwaway home, the version gate against a
   fake CLI layout (asserting an outdated host registers nothing at all and that the floor version
