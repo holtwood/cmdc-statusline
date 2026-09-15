@@ -46,7 +46,7 @@
 - CI runs the suite on the declared minimum Node (22.18.0) alongside 24: the tests import
   TypeScript directly and depend on native type stripping, which is precisely what that floor is
   about, and a 24-only matrix never proved it.
-- 315 checks.
+- 318 checks.
 
 ## 0.6.1
 

@@ -335,6 +335,7 @@ check(
 // 声明过这个名字」时才从共享表读。values 可注入，两个 stub 共用一张表就能复刻撞名。
 function makeStub({
 	statusCapability = true,
+	hasCapabilities = true,
 	gitCode = 0,
 	gitStdout = porcelain,
 	env = {},
@@ -386,7 +387,8 @@ function makeStub({
 			return {stdout: gitStdout, stderr: '', code: gitCode};
 		},
 		ui: {
-			capabilities: {status: statusCapability},
+			// 1.9.0 的 ModUi 上 capabilities 这个属性压根不存在（不是 false），两种缺法不一样
+			capabilities: hasCapabilities ? {status: statusCapability} : undefined,
 			setStatus: text => void state.statuses.push(text),
 			notify: (message, level) => void state.notices.push([message, level]),
 			select: async options => {
@@ -1605,6 +1607,26 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 			`cmdc=未知（本 mod 要求 ≥ ${ns.MIN_HOST_VERSION}）`,
 		),
 	);
+}
+
+// 宿主连 capabilities 属性都没有（1.9.0 的 ModUi 真没有）、版本又读不出来时闸门放行——
+// 修复前每次事件都直接在 .status 上抛成 mod_error；现在该安静不画，报告如实说 footer=未知
+{
+	const {api, state} = makeStub({hasCapabilities: false});
+	ns.default(api);
+	state.setFlagValue('refresh', '0');
+	let threw = false;
+	try {
+		state.hooks.onSessionStart({source: 'startup', sessionId: 'cap-less'});
+		await settle();
+	} catch {
+		threw = true;
+	}
+	check('a capability-less host does not throw on session start', threw, false);
+	check('a capability-less host paints nothing', state.statuses.length, 0);
+	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
+	checkTrue('a capability-less footer is reported as 未知', message.includes('footer=未知'), message);
+	state.restore();
 }
 
 {
