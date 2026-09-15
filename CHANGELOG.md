@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.1
 
 - **One README instead of nine.** The eight translated `README.<lang>.md` files were folded into
   `README.md` as stacked language sections (English first), with the language switcher turned into
@@ -44,8 +44,6 @@
   mod-builder API reference, and `npm run typecheck` (`tsc --noEmit`) runs in CI and in
   `prepublishOnly`. `package.json#files` ships `mod-api.d.ts` and drops `test/` and `scripts/`,
   which were published but never needed at runtime.
-
-## 0.6.1
 
 - The `git status` poll is now bounded, and it can no longer hold up the rest of the row. Both
   were real on large repositories and neither was visible from the outside:
