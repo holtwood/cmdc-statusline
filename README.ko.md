@@ -6,17 +6,14 @@
 그라데이션 컨텍스트 바, 캐시 적중률, 세션 비용, 출력 속도, 서브에이전트 사용량, 세션 이름,
 git 상태를 `cmd.ui.setStatus()`로 입력창 아래에 표시합니다.
 
-```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
-```
+![statusline: deepseek-v4.1-flash │ max │ ██████░░░░░░ 96k (47%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project](docs/statusline.png)
 
-**Command Code ≥ 1.10.0 필요.** 오래된 호스트에서는 업그레이드 알림 하나만 남기고 스스로
-비활성화합니다 — `cmdc update` 후 세션을 다시 여세요.
+**Command Code ≥ 1.10.0 필요.**
 
 ## 설치
 
 ```bash
-cmd mods add cmdc-statusline -g   # -g = 사용자 범위. 빼면 현재 프로젝트에만 설치
+cmd mods add cmdc-statusline -g
 cmd mods list
 ```
 
@@ -32,7 +29,9 @@ Windows에서는 바이너리가 `cmdc`입니다(`cmd`는 Windows 셸). 설치 �
 패키지와 직접 배치 파일은 같은 flag 이름을 선언하는 두 개의 mod이며, flag 이름은 mod 전역으로
 해석됩니다.
 
-AI 에이전트에게 맡기려면 다음을 붙여 넣으세요:
+### 에이전트에게 맡기기
+
+다음을 붙여 넣으세요:
 
 > Command Code mod `cmdc-statusline`을 사용자 범위로 설치해 줘: `cmd mods add cmdc-statusline -g`
 > 실행(Windows에서는 `cmdc`. npm에 없으면 `holtwood/cmdc-statusline` 사용). `cmd mods list`에
@@ -101,36 +100,14 @@ JSON을 만지지 않고 확인·변경하는 명령 두 개:
   리사이즈 시 다시 그립니다.
 - **출처:** 모델/effort/컨텍스트/캐시는 요청 이벤트에서, 비용 = 재개 시 transcript + 생성된 가격표로
   요청마다 계산, 서브에이전트 토큰은 `subagent_stop`에서, git은 `git status --porcelain=v1 -b`
-  (5초 캐시 + `refresh` 간격)로 가져옵니다.
+  (5초 하한 + `refresh` 간격)로 가져옵니다.
 - **모델 표:** 컨텍스트 윈도우와 가격은 CLI에 포함된 모델 카탈로그에서 **생성**됩니다 —
   `python3 scripts/gen-model-tables.py`로 재생성, `--check`로 드리프트 감지(CI가 실행).
   표에 없는 모델은 우아하게 축소됩니다(바 없음 / 비용 없음).
 
-## 개발
+## 기여
 
-```bash
-npm test                                    # node test/statusline.test.mjs — 의존성 없음, 빌드 불필요
-python3 scripts/gen-model-tables.py --check
-```
-
-Node 22.18+/24가 임포트 시 TypeScript 타입을 지우므로 테스트는 `index.ts`를 그대로 실행합니다.
-`STATUSLINE_MOD=/path/to/statusline.ts`로 다른 복사본을 대상으로 할 수 있습니다. CI는 Linux,
-macOS, Windows를 커버합니다.
-
-## 알려진 제한
-
-- 크레딧/쿼터 세그먼트 없음 — 의도적으로 로컬 전용입니다(네트워크 없음, `auth.json` 미사용).
-- 새 요청 비용은 포함된 가격표로 계산합니다. CLI 가격 변경 시 `gen-model-tables.py` 재실행 필요.
-- 세션 이름·비용·요청 복원은 문서화되지 않은 `~/.commandcode/**` 레이아웃을 읽습니다 —
-  레이아웃이 바뀌면 세그먼트가 빠질 뿐, 크래시는 없습니다.
-- `git status`를 `refresh`초마다 폴링합니다 — 작은 리포지토리에서는 공짜지만 거대한 리포지토리에서는
-  `refresh`를 올리거나 `0`으로 설정하세요.
-
-## 유사 프로젝트
-
-[grknbyk/commandcode-statusline](https://github.com/grknbyk/commandcode-statusline)(크레딧, 사용량 윈도우, 소비 페이스) ·
-[vikas-gits-good/cmd-statusline](https://github.com/vikas-gits-good/cmd-statusline)(템플릿 레이아웃, 좁은 터미널 우선순위) ·
-[estifie/command-code-mod-session-stats](https://github.com/estifie/command-code-mod-session-stats)(컨텍스트 압박, 캐시 적중률, transcript 기반 비용).
+issue와 PR을 환영합니다.
 
 ## 라이선스
 

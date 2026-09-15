@@ -128,6 +128,15 @@ const GIT_TIMEOUT_MS = 10_000;
 const TITLE_COLUMNS = 24;
 const COST_WARN_USD = 1;
 const COST_ALERT_USD = 10;
+
+// 慢仓库的自适应退避：放行间隔 = max(GIT_TTL_MS, GIT_BACKOFF × 上次实测耗时)，
+// 也就是「git 最多占 20% 的墙钟时间」。正常仓库永远被 5 秒地板罩住，行为与从前完全一致。
+const GIT_BACKOFF = 5;
+
+export function gitGapMs(durationMs: number): number {
+	return Math.max(GIT_TTL_MS, GIT_BACKOFF * Math.max(0, durationMs));
+}
+
 const ANSI_PATTERN = /\u001b\[[0-9;]*m/g;
 
 // 窄终端丢弃顺序：数字越大越先丢；0 = 永不丢
@@ -976,14 +985,16 @@ export default function (cmd: ModApi): void {
 		subTokens: 0,
 	};
 	let sessionId: string | undefined;
-	let gitCheckedAt = 0;
 	let requestStartedAt = 0;
 	let seededCost = 0;
 	let sessionCost = 0;
 	let seeded = false;
 	let timer: NodeJS.Timeout | undefined;
-	let refreshing = false;
-	let pending = false;
+	// git 的自适应闸门：读完的时刻（不是开始的时刻）+ 上次实测耗时 + 是否已经为「慢」提醒过
+	let gitFinishedAt = 0;
+	let gitDurationMs = 0;
+	let gitSlowNotified = false;
+	let gitReading = false;
 
 	const presetName = (): string => {
 		const cli = cmd.getFlag('preset');
@@ -1145,13 +1156,29 @@ export default function (cmd: ModApi): void {
 			if (hit !== undefined) snapshot.cacheHit = hit;
 		}
 		updateCost();
-		void refresh();
+		refresh();
 	};
 
-	const readGit = async (force: boolean): Promise<void> => {
-		if (!force && Date.now() - gitCheckedAt < GIT_TTL_MS) return;
-		gitCheckedAt = Date.now();
-		// 超时兜底：git 挂死（锁、死挂载、超大仓库）不能让 refreshing 永远为真——那会把底栏冻住
+	// 一次读的耗时超过配置的刷新间隔时提醒一次：这正是「用户不知道自己的仓库慢」那种不可见故障
+	const noteSlowGit = (): void => {
+		if (gitSlowNotified) return;
+		const intervalMs = flagNumber('refresh') * 1000;
+		if (intervalMs <= 0 || gitDurationMs < intervalMs) return;
+		gitSlowNotified = true;
+		cmd.ui.notify(
+			`本仓库 git status 用了 ${(gitDurationMs / 1000).toFixed(1)}s（≥ refresh=${intervalMs / 1000}s）：` +
+				`已自动放慢到每 ${Math.round(gitGapMs(gitDurationMs) / 1000)}s 读一次。想彻底关掉轮询就把 refresh 设为 0。`,
+			'warning',
+		);
+	};
+
+	const readGit = async (): Promise<void> => {
+		// 自适应闸门：慢仓库自己把间隔拉开（间隔取自「上次读完的时刻」，不是开始时刻——
+		// 否则一次 8 秒的调用返回时 5 秒 TTL 早已过期，之后每个事件都会再触发一次）
+		if (gitReading || Date.now() - gitFinishedAt < gitGapMs(gitDurationMs)) return;
+		gitReading = true;
+		const startedAt = Date.now();
+		// 超时兜底：git 挂死（锁、死挂载、超大仓库）不能让这次读永远挂着
 		const controller = new AbortController();
 		const killer = setTimeout(() => controller.abort(), GIT_TIMEOUT_MS);
 		try {
@@ -1184,6 +1211,12 @@ export default function (cmd: ModApi): void {
 			snapshot.branch = undefined;
 		} finally {
 			clearTimeout(killer);
+			gitReading = false;
+			gitDurationMs = Date.now() - startedAt;
+			gitFinishedAt = Date.now();
+			noteSlowGit();
+			// git 回来后再画一次；慢仓库里它只是让 git 段位晚一点出现，不会拖住别的段位
+			paint();
 		}
 	};
 
@@ -1197,32 +1230,27 @@ export default function (cmd: ModApi): void {
 			cwd: cwdName(),
 		});
 
-	const refresh = async (): Promise<void> => {
+	// 重绘是同步且幂等的（宿主自己会去重相同文本），所以它永远不等 git：
+	// 从前 refresh() 先 await git 再画，一个 8 秒的 git status 会把模型/花费/上下文一起卡 8 秒
+	const paint = (): void => {
 		if (!cmd.ui.capabilities.status) return;
-		if (refreshing) {
-			pending = true;
-			return;
-		}
-		refreshing = true;
-		try {
-			if (flag('git')) await readGit(false);
-			cmd.ui.setStatus(composer() || null);
-		} finally {
-			refreshing = false;
-			if (pending) {
-				pending = false;
-				void refresh();
-			}
-		}
+		cmd.ui.setStatus(composer() || null);
+	};
+
+	const refresh = (): void => {
+		// 本运行不渲染底栏（headless）就什么都别做：连 git 进程都不该起
+		if (!cmd.ui.capabilities.status) return;
+		paint();
+		// 该不该真去读 git 由 readGit 的自适应闸门决定；这里只管把请求发出去
+		if (flag('git')) void readGit();
 	};
 
 	const startTimer = (): void => {
 		const seconds = flagNumber('refresh');
 		if (seconds <= 0 || timer) return;
-		timer = setInterval(() => {
-			gitCheckedAt = 0;
-			void refresh();
-		}, seconds * 1000);
+		// 定时器的唯一职责是「外部改动」：进程内的事件本来就会刷新。
+		// 它不再去 poke 时间戳强制读——放行与否统一由从实测耗时算出的闸门决定。
+		timer = setInterval(() => refresh(), seconds * 1000);
 		timer.unref?.();
 	};
 
@@ -1233,7 +1261,7 @@ export default function (cmd: ModApi): void {
 	};
 
 	const onResize = (): void => {
-		void refresh();
+		refresh();
 	};
 
 	cmd.hooks({
@@ -1242,12 +1270,14 @@ export default function (cmd: ModApi): void {
 			if (typeof data.sessionId === 'string') sessionId = data.sessionId;
 			seedFromConfig();
 			seedTitle();
-			void seedSession();
+			seedSession();
 			startTimer();
 			// 幂等：会话被替换时若 start 再次触发，避免监听器叠加
 			process.stdout.off('resize', onResize);
 			process.stdout.on('resize', onResize);
-			void refresh();
+			// 新会话的第一次 git 读总是值得的（换会话时别被上一个会话的退避闸门挡住）
+			gitFinishedAt = 0;
+			refresh();
 		},
 		onSessionEnd: () => {
 			stopTimer();
@@ -1262,7 +1292,7 @@ export default function (cmd: ModApi): void {
 		seedFromConfig();
 		seedTitle();
 		void seedSession();
-		void refresh();
+		refresh();
 	});
 
 	cmd.on('session_titled', event => {
@@ -1270,14 +1300,14 @@ export default function (cmd: ModApi): void {
 		if (typeof data.title === 'string' && data.title.trim()) {
 			snapshot.title = data.title;
 		}
-		void refresh();
+		refresh();
 	});
 
 	cmd.on('model_request_start', event => {
 		const data = event as unknown as ModelEvent;
 		if (typeof data.model === 'string') snapshot.model = data.model;
 		requestStartedAt = Date.now();
-		void refresh();
+		refresh();
 	});
 
 	cmd.on('model_request_end', event => {
@@ -1301,7 +1331,7 @@ export default function (cmd: ModApi): void {
 				snapshot.speed = output / elapsed;
 			}
 		}
-		void refresh();
+		refresh();
 	});
 
 	// 子代理的模型请求不走 model_request_*（实测），用量只能从 subagent_stop 折进来；
@@ -1310,11 +1340,11 @@ export default function (cmd: ModApi): void {
 		const data = event as unknown as SubagentStopEvent;
 		if (typeof data.tokensUsed === 'number' && data.tokensUsed > 0) {
 			snapshot.subTokens += data.tokensUsed;
-			void refresh();
+			refresh();
 		}
 	});
 
-	cmd.on('turn_end', () => void refresh());
+	cmd.on('turn_end', () => refresh());
 
 	cmd.on('config_setting_changed', event => {
 		const data = event as unknown as ConfigChangedEvent;
@@ -1327,7 +1357,7 @@ export default function (cmd: ModApi): void {
 		if (data.setting === 'effort' && typeof data.value === 'string') {
 			snapshot.effort = data.value;
 		}
-		void refresh();
+		refresh();
 	});
 
 	// 键的展示值：数值键显示钳制后的值。显示原始配置值是不行的 ——
@@ -1526,7 +1556,7 @@ export default function (cmd: ModApi): void {
 			// refresh 改的是定时器间隔：重启它，否则「不用 /reload」这句就是假的
 			stopTimer();
 			startTimer();
-			void refresh();
+			refresh();
 			// 写到用户级、但项目级有同名键（或命令行压着）→ 底栏不会变。这种事必须当面说，
 			// 否则用户看到的是「提示已写入，界面毫无变化」，只会觉得功能坏了
 			const applied = resolveFlag(spec.name);

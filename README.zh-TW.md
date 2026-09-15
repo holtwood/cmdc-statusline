@@ -6,17 +6,14 @@
 進度條、快取命中率、工作階段花費、輸出速度、子代理用量、工作階段名稱與 git 狀態，透過
 `cmd.ui.setStatus()` 渲染在輸入框下方。
 
-```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
-```
+![statusline: deepseek-v4.1-flash │ max │ ██████░░░░░░ 96k (47%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project](docs/statusline.png)
 
-**需要 Command Code ≥ 1.10.0。** 舊宿主上本 mod 只留一條升級提示然後停用——`cmdc update`
-後重開工作階段。
+**需要 Command Code ≥ 1.10.0。**
 
 ## 安裝
 
 ```bash
-cmd mods add cmdc-statusline -g   # -g = 使用者級；去掉則只裝當前專案
+cmd mods add cmdc-statusline -g
 cmd mods list
 ```
 
@@ -30,7 +27,9 @@ cmd mods list
 Windows 上命令是 `cmdc`（`cmd` 是系統 shell）。裝法挑一種——套件與投放檔是兩個 mod，
 會宣告同名 flag，而 flag 名是跨 mod 全域解析的。
 
-交給 AI 代裝，把下面這段貼給 agent：
+### 交給 agent 安裝
+
+把下面這段貼給 agent：
 
 > 幫我安裝 Command Code 的 mod `cmdc-statusline`（使用者級）：執行
 > `cmd mods add cmdc-statusline -g`（Windows 上用 `cmdc`；若 npm 找不到該套件，改用
@@ -97,34 +96,14 @@ Windows 上命令是 `cmdc`（`cmd` 是系統 shell）。裝法挑一種——�
   花費 → 變更數 → 進度條收縮 → 分支）；模型永不丟。resize 時重繪。
 - **資料來源：** 模型/effort/上下文/快取來自請求事件；花費 = 恢復時的 transcript + 每次請求
   按價格表計算；子代理 token 來自 `subagent_stop`；git 走 `git status --porcelain=v1 -b`
-  （5 秒快取 + `refresh` 間隔輪詢）。
+  （5 秒下限 + `refresh` 間隔輪詢）。
 - **模型表：** 上下文視窗與價格由 CLI 自帶模型目錄**產生**——
   `python3 scripts/gen-model-tables.py` 重新產生，`--check` 檢查漂移（CI 會跑）。表裡沒有的
   模型優雅降級（無進度條/無花費）。
 
-## 開發
+## 貢獻
 
-```bash
-npm test                                    # node test/statusline.test.mjs —— 零依賴、無需建置
-python3 scripts/gen-model-tables.py --check
-```
-
-Node 22.18+/24 匯入時直接擦除 TypeScript 型別，測試跑的就是 `index.ts` 本體。
-`STATUSLINE_MOD=/path/to/statusline.ts` 可測另一份副本。CI 覆蓋 Linux、macOS、Windows。
-
-## 已知限制
-
-- 沒有額度/配額欄位——刻意只讀本地（不連網、不碰 `auth.json`）。
-- 新請求花費按隨包價格表計算；CLI 價格變動需重跑 `gen-model-tables.py`。
-- 工作階段名稱、花費與請求恢復讀取未文件化的 `~/.commandcode/**` 佈局——佈局變了只會
-  「少一個欄位」，不會崩。
-- `git status` 每 `refresh` 秒輪詢一次——小倉庫無感，超大倉庫請調大 `refresh` 或設 `0`。
-
-## 同類專案
-
-[grknbyk/commandcode-statusline](https://github.com/grknbyk/commandcode-statusline)（額度、用量視窗、花費節奏）·
-[vikas-gits-good/cmd-statusline](https://github.com/vikas-gits-good/cmd-statusline)（模板化佈局、窄終端優先順序）·
-[estifie/command-code-mod-session-stats](https://github.com/estifie/command-code-mod-session-stats)（上下文壓力、快取命中、transcript 口徑花費）。
+歡迎送 issue 和 PR。
 
 ## 授權
 

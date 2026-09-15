@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.6.1
+
+- The `git status` poll is now bounded, and it can no longer hold up the rest of the row. Both
+  were real on large repositories and neither was visible from the outside:
+  - `refresh()` used to `await` the git read before painting, so a `git status` that took 8s held
+    the model, cost and context rows back with it. The repaint is now synchronous and idempotent
+    (the host already de-duplicates identical status text) and git repaints again when it lands:
+    a slow git delays the git row and nothing else.
+  - The gap between reads was a flat 5s TTL stamped when a read *started*, and the timer zeroed it
+    every `refresh` seconds to force a read. A repo where `git status` outlives that TTL was
+    therefore re-read by every following event, and one where it approaches `refresh` (the same
+    10s as the abort timeout) was read almost continuously. Raising `refresh` could not fix
+    either case, because it never changed the per-call cost. The gap is now
+    `max(5s, 5 × the last measured read)`: git may consume at most ~20% of wall clock, the 5s
+    floor keeps fast repositories byte-for-byte as they were, and the timer no longer pokes a
+    timestamp to force anything.
+  - When a read exceeds `refresh` (an aborted one included) the mod says so once per session,
+    naming the measured cost and the new cadence, instead of going quiet.
+  - Measured on Windows: spawning git alone costs ~59ms and `git status -b` in a small repo ~68ms,
+    so the 10s default was never the issue on small repos — an unbounded duty cycle was the issue
+    on large ones.
+- Tests: the measured durations are driven by a faked clock rather than real waiting, covering the
+  5s floor, the backoff after a slow read, the forced first read of a new session, the one-shot
+  warning, and — the point of the change — that a paint happens while git is still hanging.
+  280 checks.
+
 ## 0.6.0
 
 - **Presets.** `preset: "full" | "minimal" | "usage"` picks a ready-made segment set so you do not

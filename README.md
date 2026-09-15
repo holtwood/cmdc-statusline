@@ -6,17 +6,14 @@ A status line for [Command Code](https://commandcode.ai) (`cmd`, `cmdc` on Windo
 gradient context bar, cache hit rate, session cost, output speed, sub-agent usage, session
 name and git state, rendered under the input panel via `cmd.ui.setStatus()`.
 
-```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
-```
+![statusline: deepseek-v4.1-flash │ max │ ██████░░░░░░ 96k (47%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project](docs/statusline.png)
 
-**Requires Command Code ≥ 1.10.0.** On older hosts the mod prints one upgrade notice and
-disables itself — run `cmdc update` and start a new session.
+**Requires Command Code ≥ 1.10.0.**
 
 ## Install
 
 ```bash
-cmd mods add cmdc-statusline -g   # -g = user scope; drop it for project-only
+cmd mods add cmdc-statusline -g
 cmd mods list
 ```
 
@@ -32,7 +29,9 @@ On Windows the binary is `cmdc` (`cmd` is the Windows shell). Pick one install p
 package and the drop-in file are two mods that declare the same flag names, which Command
 Code resolves globally.
 
-To install via an AI agent, paste:
+### Install with your agent
+
+Paste this into your agent:
 
 > Install the Command Code mod `cmdc-statusline` at user scope: run
 > `cmd mods add cmdc-statusline -g` (`cmdc` on Windows; if npm can't find it, use
@@ -104,40 +103,14 @@ default — passing `cwd=true` explicitly won't beat a config file saying `false
   the model is never dropped. Re-renders on resize.
 - **Sources:** model/effort/context/cache from request events; cost = transcript on resume
   + per-request usage priced with a generated table; sub-agent tokens from `subagent_stop`;
-  git from `git status --porcelain=v1 -b` (5s cache + `refresh` interval).
+  git from `git status --porcelain=v1 -b` (5s floor + `refresh` interval).
 - **Model tables:** context windows and prices are generated from the CLI's own catalogue,
   not handwritten — `python3 scripts/gen-model-tables.py` to regenerate, `--check` to
   detect drift (CI runs it). A missing model degrades gracefully (no bar / no cost).
 
-## Development
+## Contributing
 
-```bash
-npm test                                    # node test/statusline.test.mjs — no deps, no build
-python3 scripts/gen-model-tables.py --check
-```
-
-Node 22.18+/24 strips the TypeScript types at import, so tests run `index.ts` directly.
-`STATUSLINE_MOD=/path/to/statusline.ts` points the suite at another copy. CI covers Linux,
-macOS and Windows.
-
-## Limitations
-
-- No credits/quota segment — deliberately local-only (no network, no `auth.json`).
-- New-request cost uses the shipped price table; a CLI price change needs
-  `gen-model-tables.py` re-run.
-- Session name, cost and request restore read undocumented `~/.commandcode/**` layouts —
-  wrapped so a layout change means a missing segment, never a crash.
-- `git status` polls every `refresh` seconds — cheap in small repos, not in huge ones;
-  raise `refresh` or set `0`.
-
-## Prior art
-
-[grknbyk/commandcode-statusline](https://github.com/grknbyk/commandcode-statusline) (credits,
-usage windows, spending pace) ·
-[vikas-gits-good/cmd-statusline](https://github.com/vikas-gits-good/cmd-statusline)
-(template layout, narrow-terminal priorities) ·
-[estifie/command-code-mod-session-stats](https://github.com/estifie/command-code-mod-session-stats)
-(context pressure, cache rate, transcript-based spend).
+Issues and pull requests are welcome.
 
 ## License
 

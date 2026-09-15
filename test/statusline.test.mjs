@@ -682,6 +682,179 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	state.restore();
 }
 
+// ── git 的代价必须是有界、成比例、且永远不挡重绘 ─────────────────────────────────────
+// 用假时钟控制「实测耗时」，不靠 sleep；这里只替换 Date.now，事件循环仍走真实时间。
+const fakeClock = () => {
+	const real = Date.now;
+	let now = 1_000_000;
+	Date.now = () => now;
+	return {advance: ms => void (now += ms), restore: () => void (Date.now = real)};
+};
+
+check('gitGapMs floors at the TTL for fast repos', [ns.gitGapMs(0), ns.gitGapMs(68), ns.gitGapMs(1000)], [5000, 5000, 5000]);
+check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000), ns.gitGapMs(10_000)], [6000, 40_000, 50_000]);
+
+// 快仓库：放行间隔就是 5 秒地板 —— 与改造前逐字节相同
+{
+	const clock = fakeClock();
+	try {
+		let gitCalls = 0;
+		const {api, state} = makeStub();
+		const inner = api.exec;
+		api.exec = async options => {
+			gitCalls += 1;
+			return inner(options);
+		};
+		ns.default(api);
+		state.flags.set('refresh', '0');
+		state.hooks.onSessionStart({source: 'startup', sessionId: 'fast'});
+		await settle();
+		check('fast repo reads git once at start', gitCalls, 1);
+
+		clock.advance(1000);
+		state.events.turn_end[0]({type: 'turn_end'});
+		await settle();
+		check('fast repo still respects the 5s floor', gitCalls, 1);
+
+		clock.advance(4000);
+		state.events.turn_end[0]({type: 'turn_end'});
+		await settle();
+		check('fast repo reads again once the floor passed', gitCalls, 2);
+		state.hooks.onSessionEnd({reason: 'shutdown'});
+	} finally {
+		clock.restore();
+	}
+}
+
+// 慢仓库：一次 8 秒的读把间隔拉到 40 秒，而不是每个事件都再触发一次
+{
+	const clock = fakeClock();
+	try {
+		let gitCalls = 0;
+		const {api, state} = makeStub();
+		const inner = api.exec;
+		api.exec = async options => {
+			gitCalls += 1;
+			clock.advance(8000); // 实测这次读花了 8 秒
+			return inner(options);
+		};
+		ns.default(api);
+		state.flags.set('refresh', '0');
+		state.hooks.onSessionStart({source: 'startup', sessionId: 'slow'});
+		await settle();
+		check('slow repo read recorded once', gitCalls, 1);
+
+		clock.advance(1000);
+		state.events.turn_end[0]({type: 'turn_end'});
+		await settle();
+		check('a slow read holds the gate shut', gitCalls, 1);
+
+		clock.advance(40_000);
+		state.events.turn_end[0]({type: 'turn_end'});
+		await settle();
+		check('the gate reopens after the backoff', gitCalls, 2);
+
+		// 换会话时必须能读一次：上一个会话的退避不该把新会话挡住
+		state.hooks.onSessionStart({source: 'startup', sessionId: 'slow-2'});
+		await settle();
+		check('a new session forces its own first read', gitCalls, 3);
+		state.hooks.onSessionEnd({reason: 'shutdown'});
+	} finally {
+		clock.restore();
+	}
+}
+
+// 慢到超过 refresh 间隔：提醒一次，且只提醒一次（不可见的故障要变成可见的）
+{
+	const clock = fakeClock();
+	try {
+		const {api, state} = makeStub();
+		const inner = api.exec;
+		api.exec = async options => {
+			clock.advance(12_000);
+			return inner(options);
+		};
+		ns.default(api);
+		state.flags.set('refresh', '10');
+		state.hooks.onSessionStart({source: 'startup', sessionId: 'pathological'});
+		await settle();
+		check('a pathological repo warns exactly once', state.notices.length, 1);
+		checkTrue(
+			'the warning names the measured cost and the new cadence',
+			state.notices[0][0].includes('12.0s') && state.notices[0][0].includes('60s'),
+			JSON.stringify(state.notices),
+		);
+		check('the warning is a warning, not an error', state.notices[0][1], 'warning');
+
+		clock.advance(100_000);
+		state.events.turn_end[0]({type: 'turn_end'});
+		await settle();
+		check('it does not warn a second time', state.notices.length, 1);
+		state.hooks.onSessionEnd({reason: 'shutdown'});
+	} finally {
+		clock.restore();
+	}
+}
+
+// 关掉定时刷新（refresh=0）时不该有这条提醒：没有轮询就无所谓慢
+{
+	const clock = fakeClock();
+	try {
+		const {api, state} = makeStub();
+		const inner = api.exec;
+		api.exec = async options => {
+			clock.advance(12_000);
+			return inner(options);
+		};
+		ns.default(api);
+		state.flags.set('refresh', '0');
+		state.hooks.onSessionStart({source: 'startup', sessionId: 'no-poll'});
+		await settle();
+		check('no polling → no slow warning', state.notices.length, 0);
+		state.hooks.onSessionEnd({reason: 'shutdown'});
+	} finally {
+		clock.restore();
+	}
+}
+
+// 关键性质：git 挂着的时候，别的段位照样能立刻画出来
+{
+	const {api, state} = makeStub();
+	let releaseGit;
+	let gitCalls = 0;
+	api.exec = async options => {
+		gitCalls += 1;
+		state.execCalls.push(options);
+		await new Promise(resolve => {
+			releaseGit = resolve;
+		});
+		return {stdout: porcelain, stderr: '', code: 0};
+	};
+	ns.default(api);
+	state.flags.set('refresh', '0');
+	state.hooks.onSessionStart({source: 'startup', sessionId: 'hanging'});
+	await settle();
+	checkTrue('a paint happens while git is still hanging', state.statuses.length > 0, JSON.stringify(state.statuses));
+	checkTrue('…and that paint does not invent a branch', !strip(state.statuses.at(-1)).includes('main'), strip(state.statuses.at(-1)));
+
+	// git 还挂着，新数据（模型/effort）依然立刻上屏
+	state.events.model_request_end[0]({
+		type: 'model_request_end',
+		model: 'deepseek/deepseek-v4.1-flash',
+		effort: 'high',
+		usage: {inputTokens: 1000, outputTokens: 10},
+	});
+	await settle();
+	const during = strip(state.statuses.at(-1));
+	checkTrue('a fresh event paints while git hangs', during.includes('high'), during);
+	check('a hanging git is not re-spawned by every event', gitCalls, 1);
+
+	releaseGit();
+	await settle();
+	checkTrue('git lands later and repaints', strip(state.statuses.at(-1)).includes('main'), strip(state.statuses.at(-1)));
+	state.hooks.onSessionEnd({reason: 'shutdown'});
+}
+
 // ascii 开关：即便 COLORTERM=truecolor 也走纯 ASCII
 {
 	const {api, state} = makeStub({env: {COLORTERM: 'truecolor'}});

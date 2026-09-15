@@ -6,17 +6,14 @@
 グラデーション付きコンテキストバー、キャッシュヒット率、セッション費用、出力速度、サブエージェント
 使用量、セッション名、git の状態を `cmd.ui.setStatus()` で入力欄の下に表示します。
 
-```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
-```
+![statusline: deepseek-v4.1-flash │ max │ ██████░░░░░░ 96k (47%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project](docs/statusline.png)
 
-**Command Code ≥ 1.10.0 が必要。** 古いホストではアップグレード通知を 1 件残して自分を無効化
-します——`cmdc update` してセッションを開き直してください。
+**Command Code ≥ 1.10.0 が必要。**
 
 ## インストール
 
 ```bash
-cmd mods add cmdc-statusline -g   # -g = ユーザースコープ。外すと現在のプロジェクトのみ
+cmd mods add cmdc-statusline -g
 cmd mods list
 ```
 
@@ -32,7 +29,9 @@ Windows ではコマンドは `cmdc` です（`cmd` は Windows のシェル）�
 パッケージと直接配置は別々の mod で同じ flag 名を宣言し、flag 名は mod をまたいでグローバルに
 解決されます。
 
-AI エージェントに任せる場合、次を貼ってください:
+### エージェントに任せる
+
+次を貼ってください:
 
 > Command Code の mod `cmdc-statusline` をユーザースコープでインストールして:
 > `cmd mods add cmdc-statusline -g` を実行（Windows では `cmdc`。npm に無ければ
@@ -103,38 +102,14 @@ JSON を触らずに確認・変更できるコマンドが 2 つあります:
   落としません。リサイズで再描画。
 - **出どころ:** モデル/エフォート/コンテキスト/キャッシュはリクエストイベントから。費用 =
   再開時の transcript + 生成済み価格表によるリクエストごとの課金。サブエージェントのトークンは
-  `subagent_stop` から。git は `git status --porcelain=v1 -b`（5 秒キャッシュ + `refresh` 間隔）。
+  `subagent_stop` から。git は `git status --porcelain=v1 -b`（5 秒の下限 + `refresh` 間隔）。
 - **モデル表:** コンテキストウィンドウと価格は CLI 同梱のモデルカタログから**生成**されます——
   `python3 scripts/gen-model-tables.py` で再生成、`--check` でドリフト検出（CI が実行）。
   表に無いモデルは穏やかに縮退します（バー無し / 費用無し）。
 
-## 開発
+## コントリビュート
 
-```bash
-npm test                                    # node test/statusline.test.mjs —— 依存なし・ビルド不要
-python3 scripts/gen-model-tables.py --check
-```
-
-Node 22.18+/24 がインポート時に TypeScript の型を剥がすので、テストは `index.ts` を直接実行します。
-`STATUSLINE_MOD=/path/to/statusline.ts` で別コピーを対象にできます。CI は Linux / macOS /
-Windows をカバー。
-
-## 既知の制限
-
-- クレジット/クォータのセグメントはありません——意図的にローカルのみ（ネットワーク不使用、
-  `auth.json` も触りません）。
-- 新規リクエストの費用は同梱の価格表で計算します。CLI 側の価格変更には
-  `gen-model-tables.py` の再実行が必要です。
-- セッション名・費用・リクエスト復元は未文書化の `~/.commandcode/**` レイアウトを読みます——
-  レイアウト変更があっても「セグメントが消える」だけで、落ちることはありません。
-- `git status` を `refresh` 秒ごとにポーリングします——小さなリポジトリでは安いですが、巨大な
-  リポジトリでは `refresh` を上げるか `0` にしてください。
-
-## 類似プロジェクト
-
-[grknbyk/commandcode-statusline](https://github.com/grknbyk/commandcode-statusline)（クレジット、利用ウィンドウ、消費ペース）·
-[vikas-gits-good/cmd-statusline](https://github.com/vikas-gits-good/cmd-statusline)（テンプレートレイアウト、狭い端末の優先度処理）·
-[estifie/command-code-mod-session-stats](https://github.com/estifie/command-code-mod-session-stats)（コンテキスト圧、キャッシュヒット率、transcript 由来の費用）。
+issue と PR を歓迎します。
 
 ## ライセンス
 

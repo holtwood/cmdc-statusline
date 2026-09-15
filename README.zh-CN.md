@@ -3,20 +3,17 @@
 [English](README.md) | **简体中文** | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Русский](README.ru.md)
 
 [Command Code](https://commandcode.ai)（`cmd`，Windows 上为 `cmdc`）的状态栏 —— 模型、渐变上下文
-进度条、缓存命中率、会话花费、输出速度、子代理用量、session 名与 git 状态，通过
+进度条、缓存命中率、会话花费、输出速度、子代理用量、会话名与 git 状态，通过
 `cmd.ui.setStatus()` 渲染在输入框下方。
 
-```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
-```
+![statusline: deepseek-v4.1-flash │ max │ ██████░░░░░░ 96k (47%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project](docs/statusline.png)
 
-**需要 Command Code ≥ 1.10.0。** 旧宿主上本 mod 只留一条升级提示然后停用——`cmdc update`
-后重开会话。
+**需要 Command Code ≥ 1.10.0。**
 
 ## 安装
 
 ```bash
-cmd mods add cmdc-statusline -g   # -g = 用户级；去掉则只装当前项目
+cmd mods add cmdc-statusline -g
 cmd mods list
 ```
 
@@ -30,15 +27,17 @@ cmd mods list
 Windows 上命令是 `cmdc`（`cmd` 是系统 shell）。装法挑一种——包与投放文件是两个 mod，
 会声明同名 flag，而 flag 名是跨 mod 全局解析的。
 
-交给 AI 代装，把下面这段贴给 agent：
+### 交给 agent 安装
+
+把下面这段贴给 agent：
 
 > 帮我安装 Command Code 的 mod `cmdc-statusline`（用户级）：执行
 > `cmd mods add cmdc-statusline -g`（Windows 上用 `cmdc`；若 npm 找不到该包，改用
 > `holtwood/cmdc-statusline`），确认 `cmd mods list` 能列出，然后提醒我重启会话。
 
-## 段位
+## 字段
 
-| 段位 | 含义 |
+| 字段 | 含义 |
 |---|---|
 | `deepseek-v4.1-flash` | 当前模型（`raw-model=true` 保留 vendor 前缀） |
 | `max` | 上次请求的推理强度 |
@@ -47,7 +46,7 @@ Windows 上命令是 `cmdc`（`cmd` 是系统 shell）。装法挑一种——�
 | `$0.013` | 会话花费 —— 恢复时的历史累计 + 新增请求 |
 | `42 tok/s` | 上次请求的输出速度（墙钟计时，含首 token 等待） |
 | `sub 16k` | 本会话子代理消耗的 token |
-| `Simple Reply` | session 名（`/reload` 与恢复后仍在） |
+| `Simple Reply` | 会话名（`/reload` 与恢复后仍在） |
 | `main ↑1` | git 分支与 ahead/behind |
 | `+1 ~2 ?1` | 已暂存 · 已修改 · 未跟踪（干净时显示 `clean`） |
 | `my-project` | 当前目录名 |
@@ -72,7 +71,7 @@ Windows 上命令是 `cmdc`（`cmd` 是系统 shell）。装法挑一种——�
 | `model`、`effort`、`context` | `true` | 模型 / 推理强度 / 上次请求的上下文 |
 | `bar`、`bar-width`、`percent` | `true`、`12`、`true` | 渐变进度条、格数、百分比 |
 | `cache`、`cost`、`speed`、`sub` | `true` | 命中率 / 会话花费 / 输出速度 / 子代理 token |
-| `name`、`git`、`cwd` | `true` | session 名（24 字截断）/ 分支 + 改动数 / 目录名 |
+| `name`、`git`、`cwd` | `true` | 会话名（24 字截断）/ 分支 + 改动数 / 目录名 |
 | `preset` | `full` | `full` / `minimal` / `usage` |
 | `raw-model`、`ascii` | `false` | 保留 vendor 前缀 / 纯 ASCII 渲染 |
 | `refresh` | `10` | git 重读间隔秒数（`0` 关闭轮询） |
@@ -93,38 +92,18 @@ Windows 上命令是 `cmdc`（`cmd` 是系统 shell）。装法挑一种——�
   还会从 transcript 还原上下文、缓存命中与花费。输出速度与子代理 token 必须等真实请求。
 - **颜色：** `COLORTERM=truecolor|24bit` → 24-bit 渐变，否则 256 色近似；`ascii=true` 或
   `TERM=dumb` → `#`/`-`；`NO_COLOR` 保留块字符、去色。
-- **窄终端：** 按优先级丢段位而不截断（cwd → 速度 → effort → 子代理 → 缓存 → session 名 →
+- **窄终端：** 按优先级丢字段而不截断（cwd → 速度 → effort → 子代理 → 缓存 → 会话名 →
   花费 → 改动数 → 进度条收缩 → 分支）；模型永不丢。resize 时重绘。
 - **数据来源：** 模型/effort/上下文/缓存来自请求事件；花费 = 恢复时的 transcript + 每次请求
   按价格表计算；子代理 token 来自 `subagent_stop`；git 走 `git status --porcelain=v1 -b`
-  （5 秒缓存 + `refresh` 间隔轮询）。
+  （5 秒下限 + `refresh` 间隔轮询）。
 - **模型表：** 上下文窗口与价格由 CLI 自带模型目录**生成**——
   `python3 scripts/gen-model-tables.py` 重新生成，`--check` 检查漂移（CI 会跑）。表里没有的
   模型优雅降级（无进度条/无花费）。
 
-## 开发
+## 贡献
 
-```bash
-npm test                                    # node test/statusline.test.mjs —— 零依赖、无需构建
-python3 scripts/gen-model-tables.py --check
-```
-
-Node 22.18+/24 导入时直接擦除 TypeScript 类型，测试跑的就是 `index.ts` 本体。
-`STATUSLINE_MOD=/path/to/statusline.ts` 可测另一份副本。CI 覆盖 Linux、macOS、Windows。
-
-## 已知限制
-
-- 没有额度/配额段位——刻意只读本地（不联网、不碰 `auth.json`）。
-- 新请求花费按随包价格表计算；CLI 价格变动需重跑 `gen-model-tables.py`。
-- session 名、花费与请求恢复读取未文档化的 `~/.commandcode/**` 布局——布局变了只会
-  「少一个段位」，不会崩。
-- `git status` 每 `refresh` 秒轮询一次——小仓库无感，超大仓库请调大 `refresh` 或设 `0`。
-
-## 同类项目
-
-[grknbyk/commandcode-statusline](https://github.com/grknbyk/commandcode-statusline)（额度、用量窗口、花费节奏）·
-[vikas-gits-good/cmd-statusline](https://github.com/vikas-gits-good/cmd-statusline)（模板化布局、窄终端优先级）·
-[estifie/command-code-mod-session-stats](https://github.com/estifie/command-code-mod-session-stats)（上下文压力、缓存命中、transcript 口径花费）。
+欢迎提 issue 和 PR。
 
 ## 许可
 

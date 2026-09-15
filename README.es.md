@@ -7,17 +7,14 @@ modelo, barra de contexto con degradado, tasa de aciertos de caché, coste de la
 velocidad de salida, uso de subagentes, nombre de sesión y estado de git, dibujada bajo el
 panel de entrada con `cmd.ui.setStatus()`.
 
-```text
-deepseek-v4.1-flash │ max │ █░░░░░░░░░░░ 32k (3.2%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project
-```
+![statusline: deepseek-v4.1-flash │ max │ ██████░░░░░░ 96k (47%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project](docs/statusline.png)
 
-**Requiere Command Code ≥ 1.10.0.** En hosts más antiguos el mod deja un aviso de
-actualización y se desactiva — ejecuta `cmdc update` y abre una sesión nueva.
+**Requiere Command Code ≥ 1.10.0.**
 
 ## Instalación
 
 ```bash
-cmd mods add cmdc-statusline -g   # -g = ámbito de usuario; quítalo para un solo proyecto
+cmd mods add cmdc-statusline -g
 cmd mods list
 ```
 
@@ -33,7 +30,9 @@ En Windows el binario es `cmdc` (`cmd` es el shell de Windows). Elige una sola v
 paquete y el archivo suelto son dos mods que declaran los mismos flags, y los nombres de
 flag se resuelven globalmente entre mods.
 
-Para instalarlo con un agente de IA, pega:
+### Instalarlo con tu agente
+
+Pega esto en tu agente:
 
 > Instala el mod `cmdc-statusline` de Command Code en ámbito de usuario: ejecuta
 > `cmd mods add cmdc-statusline -g` (usa `cmdc` en Windows; si npm no lo encuentra, usa
@@ -107,39 +106,16 @@ predeterminado — pasar `cwd=true` no gana a un archivo de configuración que d
   encoge → rama); el modelo nunca se descarta. Redibuja al cambiar el tamaño.
 - **Orígenes:** modelo/esfuerzo/contexto/caché desde los eventos de petición; coste =
   transcript al reanudar + cada petición tarifada con una tabla generada; tokens de
-  subagentes desde `subagent_stop`; git con `git status --porcelain=v1 -b` (caché de 5 s +
+  subagentes desde `subagent_stop`; git con `git status --porcelain=v1 -b` (mínimo de 5 s +
   sondeo cada `refresh`).
 - **Tablas de modelos:** las ventanas de contexto y los precios se **generan** del catálogo
   de modelos incluido en el CLI — `python3 scripts/gen-model-tables.py` para regenerar,
   `--check` para detectar deriva (lo corre CI). Un modelo ausente degrada con gracia
   (sin barra / sin coste).
 
-## Desarrollo
+## Contribuciones
 
-```bash
-npm test                                    # node test/statusline.test.mjs — sin dependencias, sin build
-python3 scripts/gen-model-tables.py --check
-```
-
-Node 22.18+/24 elimina los tipos de TypeScript al importar, así que los tests ejecutan
-`index.ts` directamente. `STATUSLINE_MOD=/path/to/statusline.ts` apunta la suite a otra
-copia. CI cubre Linux, macOS y Windows.
-
-## Limitaciones conocidas
-
-- Sin segmento de créditos/cuota — deliberadamente solo local (sin red, sin `auth.json`).
-- El coste de las peticiones nuevas usa la tabla de precios incluida; un cambio de precios
-  del CLI requiere reejecutar `gen-model-tables.py`.
-- El nombre de sesión, el coste y la restauración leen layouts no documentados de
-  `~/.commandcode/**` — si el layout cambia, falta un segmento, nunca un fallo.
-- `git status` se sondea cada `refresh` segundos — gratis en repos pequeños, no en enormes;
-  sube `refresh` o ponlo a `0`.
-
-## Proyectos similares
-
-[grknbyk/commandcode-statusline](https://github.com/grknbyk/commandcode-statusline) (créditos, ventanas de uso, ritmo de gasto) ·
-[vikas-gits-good/cmd-statusline](https://github.com/vikas-gits-good/cmd-statusline) (plantilla de diseño, gestión de terminal estrecha) ·
-[estifie/command-code-mod-session-stats](https://github.com/estifie/command-code-mod-session-stats) (presión de contexto, aciertos de caché, gasto del transcript).
+Issues y pull requests son bienvenidos.
 
 ## Licencia
 
