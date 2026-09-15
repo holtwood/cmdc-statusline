@@ -10,17 +10,21 @@
 	},
 	"files": [
 		"index.ts",
-		"scripts",
-		"test",
-		"README*.md",
+		"mod-api.d.ts",
+		"README.md",
 		"LICENSE",
 		"CHANGELOG.md"
 	],
 	"scripts": {
 		"test": "node test/statusline.test.mjs",
+		"typecheck": "tsc --noEmit",
 		"tables:check": "python3 scripts/gen-model-tables.py --check",
 		"tables:generate": "python3 scripts/gen-model-tables.py",
-		"prepublishOnly": "node test/statusline.test.mjs"
+		"prepublishOnly": "npm run typecheck && node test/statusline.test.mjs"
+	},
+	"devDependencies": {
+		"@types/node": "24.13.3",
+		"typescript": "7.0.2"
 	},
 	"keywords": [
 		"commandcode",

@@ -169,8 +169,10 @@ const allSegments = {
 	context: true,
 	bar: true,
 	percent: true,
+	cache: true,
 	cost: true,
 	speed: true,
+	sub: true,
 	name: true,
 	git: true,
 	cwd: true,
@@ -338,6 +340,7 @@ function makeStub({statusCapability = true, gitCode = 0, gitStdout = porcelain, 
 		statuses: [],
 		execCalls: [],
 		flags: new Map(),
+		flagDefs: new Map(),
 		hooks: {},
 		events: {},
 		commands: {},
@@ -353,7 +356,10 @@ function makeStub({statusCapability = true, gitCode = 0, gitStdout = porcelain, 
 	const api = {
 		name: 'statusline',
 		cwd,
-		addFlag: (name, def) => void state.flags.set(name, def.default),
+		addFlag: (name, def) => {
+			state.flags.set(name, def.default);
+			state.flagDefs.set(name, def);
+		},
 		getFlag: name => state.flags.get(name),
 		hooks: hooks => void (state.hooks = hooks),
 		on: (event, handler) => void ((state.events[event] ??= []).push(handler)),
@@ -417,7 +423,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 {
 	const {api, state} = makeStub();
 	ns.default(api);
-	check('registers 17 flags', state.flags.size, 17);
+	check('registers 18 flags', state.flags.size, 18);
 	for (const event of ['run_start', 'session_titled', 'model_request_start', 'model_request_end', 'turn_end', 'config_setting_changed'])
 		checkTrue(`registers ${event}`, Array.isArray(state.events[event]));
 	checkTrue('registers /statusline', typeof state.commands.statusline === 'function');
@@ -556,6 +562,169 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 		line.includes('32k (3.2%)') && line.includes('cache 22%') && line.includes('$0.0038'),
 		line,
 	);
+	useHome(baseHome);
+}
+
+// 同进程换会话（onSessionEnd reason: 'replaced'）：新会话必须拿到全新状态——
+// 旧的名字/花费/上下文一个都不能漏过来；同一 id 再触发则不许清零
+{
+	useHome(fakeHome);
+	const second = 'second-session-id';
+	// 会话 B 有自己的 transcript：恢复后花费要等于 B 的，而不是 A+B
+	writeFileSync(join(projectDir, `${second}.jsonl`), JSON.stringify({costUsd: 0.5}));
+
+	const {api, state} = makeStub();
+	ns.default(api);
+	state.flags.set('refresh', '0');
+	state.flags.set('git', false);
+	state.hooks.onSessionStart({source: 'resume', sessionId: seededSession});
+	await settle();
+	await useBaselineUsage(state);
+	await settle();
+	checkTrue(
+		'session A shows its own title + cost',
+		strip(state.statuses.at(-1)).includes('Seeded Session Name') &&
+			strip(state.statuses.at(-1)).includes('$0.0038'),
+		strip(state.statuses.at(-1)),
+	);
+
+	state.hooks.onSessionStart({source: 'resume', sessionId: second});
+	await settle();
+	const line = strip(state.statuses.at(-1));
+	checkTrue('session B drops A title', !line.includes('Seeded Session Name'), line);
+	checkTrue('session B drops A context', !line.includes('32k'), line);
+	checkTrue('session B re-seeds cost from its own transcript', line.includes('$0.5'), line);
+	// A 的 sessionCost（$0.0038）若漏进来会显示 $0.5038
+	checkTrue('session B does not leak A cost', !line.includes('$0.5038'), line);
+
+	// 同一 sessionId 再触发 onSessionStart：不该把累计清零
+	state.hooks.onSessionStart({source: 'resume', sessionId: second});
+	await settle();
+	checkTrue('same-id session start keeps the data', strip(state.statuses.at(-1)).includes('$0.5'), strip(state.statuses.at(-1)));
+	state.hooks.onSessionEnd({reason: 'replaced'});
+	useHome(baseHome);
+}
+
+// transcript 里有 usage/model 行、但行尾锚一条都没中 → 报告里点名「格式可能变了」，不许静默归零
+{
+	useHome(fakeHome);
+	const drifty = 'drift-session-id';
+	// usage 不在行尾（model 后面还有字段）：ASSISTANT_TAIL 匹配不到
+	writeFileSync(
+		join(projectDir, `${drifty}.jsonl`),
+		JSON.stringify({type: 'message', usage: {inputTokens: 42}, model: 'm', extra: 1}),
+	);
+	check('readSessionSeed flags drift', (await readSessionSeed(drifty, FIXTURE_CWD)).drifted, true);
+	check(
+		'normal transcript is not drifted',
+		(await readSessionSeed('cost-session-id', FIXTURE_CWD)).drifted,
+		false,
+	);
+
+	const {api, state} = makeStub();
+	ns.default(api);
+	state.flags.set('refresh', '0');
+	state.flags.set('git', false);
+	state.hooks.onSessionStart({source: 'resume', sessionId: drifty});
+	await settle();
+	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
+	checkTrue('drifted transcript is called out', message.includes('transcript') && message.includes('格式可能已变'), message);
+	state.hooks.onSessionEnd({reason: 'shutdown'});
+	useHome(baseHome);
+}
+
+// lang=en：报告与 flag 描述都切英文；不认识的值点名 + 回落 zh
+{
+	useHome(homeWith({lang: 'en'}));
+	const {api, state} = makeStub();
+	ns.default(api);
+	checkTrue(
+		'flag descriptions follow config lang at registration',
+		state.flagDefs.get('model').description === 'show the active model',
+		state.flagDefs.get('model')?.description,
+	);
+	state.flags.set('refresh', '0');
+	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
+	checkTrue('report renders in English', message.includes('Status line') && message.includes('Config'), message);
+	useHome(baseHome);
+}
+
+{
+	// 命令行 lang=en 也能把报告切成英文（flag 描述注册已定，管不到——属已知限制）
+	const {api, state} = makeStub();
+	ns.default(api);
+	state.flags.set('lang', 'en');
+	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
+	checkTrue('cli lang switches the report', message.includes('Status line'), message);
+	state.restore();
+}
+
+{
+	// 交互编辑器里 lang 走的是 select 分支（不是布尔的开/关）
+	const home = homeWith({});
+	useHome(home);
+	const {api, state} = makeStub({answers: ['用户级', 'lang', 'en', true, '完成']});
+	ns.default(api);
+	state.flags.set('refresh', '0');
+	const message = (await state.commands.statusline({args: 'config', cwd: api.cwd, exec: api.exec, ui: api.ui}))
+		.message;
+	checkTrue('lang written through select', message.includes('lang="en"'), message);
+	check('lang persisted', JSON.parse(readFileSync(join(home, '.commandcode', 'statusline.json'), 'utf8')).lang, 'en');
+	// 写入后立刻重绘：报告已经切成英文
+	checkTrue('report flips to English after the write', message.includes('Config (key / default'), message);
+	useHome(baseHome);
+}
+
+{
+	// 不认识的 lang：点名告警 + 回落 zh，不能静默当 zh 用
+	useHome(homeWith({lang: 'fr'}));
+	const {api, state} = makeStub();
+	ns.default(api);
+	state.flags.set('refresh', '0');
+	const message = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
+	checkTrue('unknown lang is called out', message.includes('未知语言 "fr"'), message);
+	checkTrue('unknown lang falls back to zh', message.includes('状态栏'), message);
+	// 命令行 lang=en 压着文件里的坏值时，告警不许谎报「已按 zh 处理」
+	state.flags.set('lang', 'en');
+	const overridden = (await state.commands.statusline({args: '', cwd: api.cwd, exec: api.exec})).message;
+	checkTrue(
+		'unknown lang reports the real effective value',
+		overridden.includes('unknown lang "fr"') && overridden.includes('effective lang=en'),
+		overridden,
+	);
+	useHome(baseHome);
+}
+
+// 会话被替换后，旧会话迟到的带 sessionId 事件不许写进新会话
+{
+	useHome(fakeHome);
+	const {api, state} = makeStub();
+	ns.default(api);
+	state.flags.set('refresh', '0');
+	state.flags.set('git', false);
+	state.hooks.onSessionStart({source: 'resume', sessionId: 'sess-a'});
+	await settle();
+	for (const emit of [
+		() => state.events.session_titled.forEach(fn => fn({sessionId: 'sess-b', title: 'Stale Title'})),
+		() =>
+			state.events.model_request_end.forEach(fn =>
+				fn({sessionId: 'sess-b', model: 'stale-model', usage: {inputTokens: 999}}),
+			),
+		() => state.events.subagent_stop.forEach(fn => fn({sessionId: 'sess-b', tokensUsed: 777})),
+	]) emit();
+	await settle();
+	const line = strip(state.statuses.at(-1));
+	checkTrue('stale titled event is dropped', !line.includes('Stale Title'), line);
+	checkTrue('stale request_end event is dropped', !line.includes('stale-model') && !line.includes('999'), line);
+	checkTrue('stale subagent event is dropped', !line.includes('sub 777'), line);
+	// 同 id 的正常事件不受影响；异 id 继续被挡
+	state.events.session_titled.forEach(fn => fn({sessionId: 'sess-a', title: 'Fresh Title'}));
+	state.events.session_titled.forEach(fn => fn({sessionId: 'sess-b', title: 'Other Title'}));
+	await settle();
+	const after = strip(state.statuses.at(-1));
+	checkTrue('same-id event still lands', after.includes('Fresh Title'), after);
+	checkTrue('foreign-id event still dropped', !after.includes('Other Title'), after);
+	state.hooks.onSessionEnd({reason: 'shutdown'});
 	useHome(baseHome);
 }
 
@@ -1354,7 +1523,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	writeFileSync(join(cliRoot, 'package.json'), JSON.stringify({name: 'command-code', version: '1.10.0'}));
 	const atFloor = makeStub();
 	ns.default(atFloor.api);
-	check('the floor version itself is supported', atFloor.state.flags.size, 17);
+	check('the floor version itself is supported', atFloor.state.flags.size, 18);
 	check('the floor version gets no upgrade notice', atFloor.state.notices.length, 0);
 	check('the floor version registers the command', typeof atFloor.state.commands.statusline, 'function');
 	process.argv[1] = argv1;
@@ -1365,7 +1534,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	check('unknown host version produces no notice', fresh.state.notices.length, 0);
 	checkTrue(
 		'unknown host version still registers everything',
-		fresh.state.flags.size === 17 && typeof fresh.state.commands.statusline === 'function',
+		fresh.state.flags.size === 18 && typeof fresh.state.commands.statusline === 'function',
 	);
 	checkTrue(
 		'unknown host version is reported as 未知',
@@ -1405,7 +1574,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	writeFileSync(join(cliRoot, 'package.json'), JSON.stringify({name: 'command-code', version: ''}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	check('a blank version does not disable the mod', state.flags.size, 17);
+	check('a blank version does not disable the mod', state.flags.size, 18);
 	check('a blank version produces no upgrade notice', state.notices.length, 0);
 	check('a blank version does not throw', typeof state.commands.statusline, 'function');
 	process.argv[1] = argv1;
@@ -1514,24 +1683,14 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(baseHome);
 }
 
-// 9 份 README 和 MIN_HOST_VERSION 不能各自漂：改了常量就必须同步文档（同 gen-model-tables 的思路）
+// README 和 MIN_HOST_VERSION 不能各自漂：改了常量就必须同步文档（同 gen-model-tables 的思路）
 {
 	const root = fileURLToPath(new URL('..', import.meta.url));
-	const names = [
-		'README.md',
-		'README.zh-CN.md',
-		'README.zh-TW.md',
-		'README.ja.md',
-		'README.ko.md',
-		'README.es.md',
-		'README.fr.md',
-		'README.de.md',
-		'README.ru.md',
-	];
-	const stale = names.filter(
-		name => !readFileSync(join(root, name), 'utf8').includes(`≥ ${ns.MIN_HOST_VERSION}`),
-	);
-	check('every README states the host floor', stale, []);
+	const readme = readFileSync(join(root, 'README.md'), 'utf8');
+	checkTrue('README states the host floor', readme.includes(`≥ ${ns.MIN_HOST_VERSION}`));
+	// 九种语言挤在一个 README 里，任何一个漏掉这一段都算漂
+	const stale = readme.split(`≥ ${ns.MIN_HOST_VERSION}`).length - 1;
+	check('every language section states the host floor', stale, 9);
 }
 
 const total = passed + failures.length;

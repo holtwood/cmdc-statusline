@@ -4,7 +4,7 @@
 //
 // 部署：cp index.ts ~/.commandcode/mods/statusline.ts
 //       （或装包：cmd mods add holtwood/cmdc-statusline -g；试跑不安装：cmd --mod ./index.ts）
-// 要求：cmdc ≥ 1.54.0（MIN_HOST_VERSION）。旧宿主不做兼容——加载时检测到偏旧就停用：只在消息区
+// 要求：cmdc ≥ MIN_HOST_VERSION（当前 1.10.0）。旧宿主不做兼容——加载时检测到偏旧就停用：只在消息区
 //       留一条升级提示，flag / 命令 / hook / 底栏一概不注册。版本读不出来时按可用处理（不猜）。
 // 背景：cmdc 没有 Claude Code 式的 statusLine 外部命令钩子，mod 的 cmd.ui.setStatus 是唯一
 // 能在输入框下方渲染常驻状态段的接口（见 mod-builder reference/ui.md），本 mod 按此实现。
@@ -21,7 +21,7 @@
 //                                           cmdc 会把 --mod-option 的值从 mod 可见的 argv 里抹掉，
 //                                           故无法精确区分「显式传了默认值」）
 //   可用键：model/effort/context/bar/bar-width/percent/cache/cost/speed/sub/name/git/cwd/
-//          preset/raw-model/ascii/refresh
+//          preset/raw-model/ascii/refresh/lang（lang=zh|en 只影响报告与弹窗文案）
 //   preset：full（全部，默认）/ minimal（模型+effort+上下文+分支）/ usage（上下文+缓存+花费+子代理）。
 //           它只决定「哪些段位开」，写死某个键即可覆盖它；渲染开关（ascii/raw-model）与它无关。
 //
@@ -33,11 +33,13 @@
 // 窄终端：按优先级降级（先丢 cwd→速度→effort→子代理→缓存→session 名→花费→改动数，
 //         上下文由「条+token+百分比」逐级退化，支路最后丢，模型永不丢），并监听 resize 立即重绘。
 
-import {createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
+import {createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {createInterface} from 'node:readline';
-import type {ModApi} from '@commandcode/harness';
+// ModApi 的类型不在任何已发布包里（@commandcode/harness 未发布）——用仓库里的本地声明，
+// 只供 tsc --noEmit 校验；运行时 import type 被整个擦除，不解析、不影响单文件投放。
+import type {ModApi} from './mod-api.js';
 
 type Usage = {
 	readonly inputTokens?: number;
@@ -68,13 +70,13 @@ type SubagentStopEvent = {
 };
 
 type GitInfo = {
-	readonly isRepo: boolean;
-	readonly branch?: string;
-	readonly ahead: number;
-	readonly behind: number;
-	readonly staged: number;
-	readonly modified: number;
-	readonly untracked: number;
+	isRepo: boolean;
+	branch?: string;
+	ahead: number;
+	behind: number;
+	staged: number;
+	modified: number;
+	untracked: number;
 };
 
 type Snapshot = GitInfo & {
@@ -102,6 +104,38 @@ type Segments = {
 	readonly git: boolean;
 	readonly cwd: boolean;
 };
+
+// 一次会话的全套可变状态收在一个对象里：mod 在进程里只装一次，宿主却会在同进程换会话
+// （onSessionEnd 的 reason 有 'replaced' —— navigateTree / resume 另一条会话都走这条路）。
+// id 变了就整体重建：名字/花费/seed 标记一个都不能漏给下一个会话。
+// 新字段必须进 freshSession() —— 类型逼着这么做，不存在「加了字段忘了重置」。
+type SessionState = {
+	id?: string;
+	seeded: boolean;
+	seededCost: number;
+	sessionCost: number;
+	/** transcript 有 usage/model 行但行尾锚全空 → 格式可能变了，报告里点名 */
+	seedDrifted: boolean;
+	snapshot: Snapshot;
+};
+
+const freshSession = (id?: string): SessionState => ({
+	id,
+	seeded: false,
+	seededCost: 0,
+	sessionCost: 0,
+	seedDrifted: false,
+	snapshot: {
+		isRepo: false,
+		ahead: 0,
+		behind: 0,
+		staged: 0,
+		modified: 0,
+		untracked: 0,
+		costUsd: 0,
+		subTokens: 0,
+	},
+});
 
 type ComposeOptions = {
 	readonly color: boolean;
@@ -635,6 +669,7 @@ type FlagSpec = {
 	readonly type: 'boolean' | 'string';
 	readonly default: boolean | string;
 	readonly description: string;
+	readonly descriptionEn: string;
 	readonly segment?: boolean;
 	/** 数值键：取值必须能解析成非负数字（字符串或数字都收） */
 	readonly numeric?: boolean;
@@ -643,23 +678,24 @@ type FlagSpec = {
 
 // 键的唯一事实来源：addFlag、/statusline 的表、交互式选择器都读这里，不再各写一份
 const FLAG_SPECS: readonly FlagSpec[] = [
-	{name: 'model', type: 'boolean', default: true, description: '显示当前模型', segment: true},
-	{name: 'effort', type: 'boolean', default: true, description: '显示 thinking effort', segment: true},
-	{name: 'context', type: 'boolean', default: true, description: '显示上一次请求的上下文 token 数', segment: true},
-	{name: 'bar', type: 'boolean', default: true, description: '用渐变进度条显示上下文占窗（需命中内置窗口表）', segment: true},
-	{name: 'percent', type: 'boolean', default: true, description: '显示上下文占模型窗口的百分比', segment: true},
-	{name: 'cache', type: 'boolean', default: true, description: '显示上一次请求的缓存命中率', segment: true},
-	{name: 'cost', type: 'boolean', default: true, description: '显示本次会话累计花费（按内置单价表推算）', segment: true},
-	{name: 'speed', type: 'boolean', default: true, description: '显示上一次请求的输出速度（tok/s）', segment: true},
-	{name: 'sub', type: 'boolean', default: true, description: '显示子代理（agent 工具）累计消耗 token', segment: true},
-	{name: 'name', type: 'boolean', default: true, description: '显示 session 名', segment: true},
-	{name: 'git', type: 'boolean', default: true, description: '显示 git 分支与改动数', segment: true},
-	{name: 'cwd', type: 'boolean', default: true, description: '显示当前目录名', segment: true},
-	{name: 'preset', type: 'string', default: 'full', description: '字段预设：full / minimal / usage（单个键可覆盖预设）'},
-	{name: 'bar-width', type: 'string', default: '12', description: '进度条格数', numeric: true, max: 40},
-	{name: 'raw-model', type: 'boolean', default: false, description: '模型显示完整 id（不省略 vendor 前缀）'},
-	{name: 'ascii', type: 'boolean', default: false, description: '纯 ASCII 渲染（无 Unicode 块、无颜色）'},
-	{name: 'refresh', type: 'string', default: '10', description: '刷新间隔秒数（0 = 关闭定时刷新）', numeric: true, max: 3600},
+	{name: 'model', type: 'boolean', default: true, description: '显示当前模型', descriptionEn: 'show the active model', segment: true},
+	{name: 'effort', type: 'boolean', default: true, description: '显示 thinking effort', descriptionEn: 'show the thinking effort', segment: true},
+	{name: 'context', type: 'boolean', default: true, description: '显示上一次请求的上下文 token 数', descriptionEn: 'context tokens of the last request', segment: true},
+	{name: 'bar', type: 'boolean', default: true, description: '用渐变进度条显示上下文占窗（需命中内置窗口表）', descriptionEn: 'gradient bar of context window share (needs a known window)', segment: true},
+	{name: 'percent', type: 'boolean', default: true, description: '显示上下文占模型窗口的百分比', descriptionEn: 'context share of the model window', segment: true},
+	{name: 'cache', type: 'boolean', default: true, description: '显示上一次请求的缓存命中率', descriptionEn: 'cache hit rate of the last request', segment: true},
+	{name: 'cost', type: 'boolean', default: true, description: '显示本次会话累计花费（按内置单价表推算）', descriptionEn: 'session cost (estimated via the built-in price table)', segment: true},
+	{name: 'speed', type: 'boolean', default: true, description: '显示上一次请求的输出速度（tok/s）', descriptionEn: 'output speed of the last request (tok/s)', segment: true},
+	{name: 'sub', type: 'boolean', default: true, description: '显示子代理（agent 工具）累计消耗 token', descriptionEn: 'tokens burned by sub-agents', segment: true},
+	{name: 'name', type: 'boolean', default: true, description: '显示 session 名', descriptionEn: 'show the session name', segment: true},
+	{name: 'git', type: 'boolean', default: true, description: '显示 git 分支与改动数', descriptionEn: 'git branch + changes', segment: true},
+	{name: 'cwd', type: 'boolean', default: true, description: '显示当前目录名', descriptionEn: 'current directory basename', segment: true},
+	{name: 'preset', type: 'string', default: 'full', description: '字段预设：full / minimal / usage（单个键可覆盖预设）', descriptionEn: 'segment preset: full / minimal / usage (a single key overrides it)'},
+	{name: 'bar-width', type: 'string', default: '12', description: '进度条格数', descriptionEn: 'bar width in cells', numeric: true, max: 40},
+	{name: 'raw-model', type: 'boolean', default: false, description: '模型显示完整 id（不省略 vendor 前缀）', descriptionEn: 'full model id (keep the vendor prefix)'},
+	{name: 'ascii', type: 'boolean', default: false, description: '纯 ASCII 渲染（无 Unicode 块、无颜色）', descriptionEn: 'plain ASCII rendering (no Unicode blocks, no colour)'},
+	{name: 'refresh', type: 'string', default: '10', description: '刷新间隔秒数（0 = 关闭定时刷新）', descriptionEn: 'seconds between git re-reads (0 disables polling)', numeric: true, max: 3600},
+	{name: 'lang', type: 'string', default: 'zh', description: '界面语言：zh / en', descriptionEn: 'ui language: zh / en'},
 ];
 
 const FLAG_BY_NAME = new Map(FLAG_SPECS.map(spec => [spec.name, spec]));
@@ -713,9 +749,20 @@ export function acceptsValue(spec: FlagSpec, value: unknown): boolean {
 	return typeof value === 'string';
 }
 
-export function describeExpectation(spec: FlagSpec): string {
-	if (spec.numeric) return '非负数字';
-	return spec.type === 'boolean' ? 'true / false' : '字符串';
+export type Lang = 'zh' | 'en';
+
+// lang 键的归一化：zh / zh-CN / en / en-US 都认；其余返回 undefined（诊断会点名 + 回落 zh）
+export function langOf(value: unknown): Lang | undefined {
+	if (typeof value !== 'string') return undefined;
+	const head = value.trim().toLowerCase();
+	if (head === 'zh' || head.startsWith('zh-') || head.startsWith('zh_')) return 'zh';
+	if (head === 'en' || head.startsWith('en-') || head.startsWith('en_')) return 'en';
+	return undefined;
+}
+
+export function describeExpectation(spec: FlagSpec, lang: Lang = 'zh'): string {
+	if (spec.numeric) return lang === 'en' ? 'non-negative number' : '非负数字';
+	return spec.type === 'boolean' ? 'true / false' : lang === 'en' ? 'string' : '字符串';
 }
 
 // 数值键的规范化：解析得出非负数就取整数并按 max 截断，否则回落默认。
@@ -726,10 +773,14 @@ export function clampedNumber(spec: FlagSpec, value: unknown): number {
 	return Math.min(spec.max ?? Number.MAX_SAFE_INTEGER, Math.floor(parsed));
 }
 
-// preset 名大小写不敏感（presetName() 也是这么归一化的）：这里不改，
-// 诊断表就会把 "Minimal" 原样报出来 —— 与实际生效的 minimal 对不上
+// preset / lang 名大小写不敏感（presetName() 与 langOf() 也是这么归一化的）：这里不改，
+// 诊断表就会把 "Minimal" / "EN" 原样报出来 —— 与实际生效的值对不上
 export function canonical(spec: FlagSpec, value: unknown): unknown {
-	return spec.name === 'preset' && typeof value === 'string' ? value.toLowerCase() : value;
+	if (typeof value !== 'string') return value;
+	if (spec.name === 'preset') return value.toLowerCase();
+	// en-US → en；不认识的值原样保留，诊断表照实报出、实际按 zh 走
+	if (spec.name === 'lang') return langOf(value) ?? value;
+	return value;
 }
 
 export type ConfigLoad = {
@@ -793,7 +844,19 @@ export function writeConfigKey(path: string, key: string, value: unknown): void 
 	}
 	current[key] = value;
 	mkdirSync(dirname(path), {recursive: true});
-	writeFileSync(path, `${JSON.stringify(current, null, 2)}\n`, 'utf8');
+	// 先写临时文件再原子改名：直接写目标文件，中途崩溃会留下半个 JSON，
+	// 下次加载被当坏文件整份忽略 —— 用户看到的是「配置全丢了」而不是「上次写挂了」
+	const tmp = `${path}.${process.pid}.tmp`;
+	try {
+		writeFileSync(tmp, `${JSON.stringify(current, null, 2)}\n`, 'utf8');
+		renameSync(tmp, path);
+	} catch (error) {
+		// 写半截的 tmp 留在配置目录里只是垃圾；清不掉也别盖住原始错误
+		try {
+			rmSync(tmp, {force: true});
+		} catch {}
+		throw error;
+	}
 }
 
 // 下限是查出来的，不是拍脑袋定的：抓 npm 上相邻两版的 dist/cli.mjs 直接比对
@@ -819,7 +882,7 @@ export function hostVersion(): string | undefined {
 		// argv[1] 不一定是 cmdc（跑测试时就是测试文件本身）：名字对不上就不认
 		if (manifest.name !== 'command-code') return undefined;
 		// 只认以数字开头的版本号：""、"unknown" 这类根本没法比较，必须当成「读不到」。
-		// 否则它们会被解析成 0 去比 1.54.0，把一个好端端的安装判成过旧、直接停用。
+		// 否则它们会被解析成 0 去比 MIN_HOST_VERSION，把一个好端端的安装判成过旧、直接停用。
 		if (typeof manifest.version !== 'string' || !/^\d/.test(manifest.version)) return undefined;
 		return manifest.version;
 	} catch {
@@ -861,6 +924,8 @@ type SessionSeed = {
 	readonly model?: string;
 	readonly effort?: string;
 	readonly usage?: Usage;
+	/** transcript 里有 usage+model 记录、但行尾锚一条都没匹配上 → 产品的记录格式可能变了 */
+	readonly drifted?: boolean;
 };
 
 // 助手消息条目把 usage / model / effort 排在行尾（内容体在前面）：
@@ -900,6 +965,10 @@ export async function readSessionSeed(
 		let model: string | undefined;
 		let effort: string | undefined;
 		let usage: Usage | undefined;
+		// 计数而不只取「最后一条」：transcript 里同时带 usage 与 model 的行存在、但行尾锚
+		// 一条都没中 → 行形状变了。没有这个信号，格式漂移会静默变成「花费归零/上下文消失」。
+		let usageLines = 0;
+		let tailHits = 0;
 		for await (const line of reader) {
 			if (line.includes('"costUsd"')) {
 				for (const match of line.matchAll(/"costUsd":\s*([\d.eE+-]+)/g)) {
@@ -907,14 +976,16 @@ export async function readSessionSeed(
 					if (Number.isFinite(value)) total += value;
 				}
 			}
+			if (line.includes('"usage"') && line.includes('"model"')) usageLines += 1;
 			const tail = ASSISTANT_TAIL.exec(line);
 			if (tail) {
+				tailHits += 1;
 				model = tail[2];
 				effort = tail[3];
 				usage = usageFromFields(tail[1]);
 			}
 		}
-		return {costUsd: total, model, effort, usage};
+		return {costUsd: total, model, effort, usage, drifted: usageLines > 0 && tailHits === 0};
 	} catch {
 		return undefined;
 	} finally {
@@ -945,14 +1016,180 @@ export function readUserConfig(): {model?: string; reasoningEffort: Record<strin
 	}
 }
 
+// ── 界面文案（lang 键：zh 默认 / en）────────────────────────────────────────────────
+// flag 描述与版本闸门提示在注册期出文案，那会儿还没有 getFlag —— 只看配置文件里的 lang；
+// 其余全部按生效 lang 实时切（写完 lang=en，下一条报告就是英文）。两个入口的取舍不同：
+// 报告/弹窗每次取 currentLang()，注册期描述只读配置文件 —— CLI --mod-option lang=en 管不到
+// 已经注册出去的描述文本，这是宿主的限制，不是这里能绕的。
+const L10N = {
+	zh: {
+		builtin: '内置默认',
+		userScope: '用户',
+		projectScope: '项目',
+		cli: '命令行',
+		presetSource: (name: string) => `预设 ${name}`,
+		on: '开',
+		off: '关',
+		userLevel: '用户级',
+		projectLevel: '项目级',
+		done: '完成',
+		doneDesc: '结束配置',
+		allProjects: '所有项目',
+		thisProject: '只影响这个项目',
+		scopeTitle: (preset: string) => `把配置写到哪一份？（当前预设 ${preset}）`,
+		editorTitle: (scope: string, changed: number) =>
+			`状态栏 · 写入${scope} · 本次已改 ${changed} 项`,
+		presetTitle: '选一个预设（单个键仍可覆盖它）',
+		langTitle: '选界面语言',
+		numberTitle: (name: string, expect: string, max?: number) =>
+			`${name}（${expect}${max === undefined ? '' : `，最大 ${max}`}）`,
+		boolTitle: (name: string, desc: string) => `${name}：${desc}`,
+		confirmTitle: (name: string, value: string) => `写入 ${name} = ${value}？`,
+		confirmBody: (path: string, name: string, current: string, source: string, value: string) =>
+			`${path}\n${name}: 当前 ${current}（${source}）→ 写入 ${value}`,
+		writeFailed: (msg: string) => `写入失败：${msg}`,
+		shadowed: (name: string, effective: string, source: string, scope: string) =>
+			`${name} 实际生效的是 ${effective}（来源：${source}）—— 你刚写进${scope}的值被更高优先级盖住了，底栏不会变`,
+		wrote: (path: string, changes: readonly string[]) =>
+			`已写入 ${path}：\n${changes.map(change => `  ${change}`).join('\n')}`,
+		noChanges: '没有改动。',
+		needTui: `交互式配置需要 TUI 与交互面板（cmd.ui.select / input / confirm，需 cmdc ≥ ${MIN_HOST_VERSION}）。`,
+		noModal: '这次运行没有交互面板（headless 下属正常）——没有写任何文件。',
+		noModalShort: '交互式配置需要 TUI（headless 下选择器返回 undefined，不会写任何文件）。',
+		lineLabel: '状态栏',
+		dataLabel: '数据',
+		colon: '：',
+		configHead: '配置（键 / 默认 / 生效 / 来源）：',
+		filesLabel: '文件',
+		windowUnknown: '（窗口未知）',
+		priceUnknown: '（单价未知）',
+		notRepo: '非仓库',
+		unknown: '未知',
+		restored: (v: string) => `（含恢复 ${v}）`,
+		subNote: (v: string) => `（约 ${v}，未计入上面 cost）`,
+		requires: (v: string) => `（本 mod 要求 ≥ ${v}）`,
+		rendering: '渲染中',
+		headless: '本运行不渲染（headless）',
+		activeTag: '（生效）',
+		brokenTag: '（读不动）',
+		noFilesNote: '（两份配置文件都没有生效 —— 生效值逐行看「来源」列：内置默认 / 预设 / 命令行）',
+		brokenFile: (path: string) =>
+			`${path} 读不动（JSON 非法或顶层不是对象）—— 已整体忽略，里面的键一个都没生效`,
+		unknownKey: (key: string, source: string) => `未知键 "${key}"（${source}）—— 拼错了？`,
+		badValue: (key: string, expect: string, actual: string, source: string) =>
+			`"${key}" 的取值不可用：期望 ${expect}，实际 ${actual}（${source}）—— 已忽略`,
+		unknownPreset: (value: string, source: string, effective: string) =>
+			`未知预设 ${value}（${source}）—— 可用：${PRESET_NAMES.join(' / ')}；${
+				effective === 'full' ? '已按 full 处理' : `当前生效的是 preset=${effective}`
+			}`,
+		unknownLang: (value: string, source: string, effective: string) =>
+			`未知语言 ${value}（${source}）—— 可用：zh / en；${
+				effective === 'zh' ? '已按 zh 处理' : `当前生效的是 lang=${effective}`
+			}`,
+		seedDrift:
+			'transcript 里有 usage/model 记录，但一条都没按现有行尾格式解析出来 —— ' +
+			'产品的 transcript 格式可能已变化，恢复出的花费/上下文可能不准',
+		tip: '提示：/statusline config 交互式修改（选完即写入并立刻重绘，不用 /reload）',
+		oldHost: (min: string, current: string) =>
+			`statusline 需要 cmdc ≥ ${min}（当前 ${current}）：本 mod 不支持旧版本，已停用。请先更新 cmdc（cmdc update），再重开会话。`,
+		slowGit: (durationS: string, intervalS: number, gapS: number) =>
+			`本仓库 git status 用了 ${durationS}s（≥ refresh=${intervalS}s）：` +
+			`已自动放慢到每 ${gapS}s 读一次。想彻底关掉轮询就把 refresh 设为 0。`,
+	},
+	en: {
+		builtin: 'builtin',
+		userScope: 'user',
+		projectScope: 'project',
+		cli: 'CLI',
+		presetSource: (name: string) => `preset ${name}`,
+		on: 'On',
+		off: 'Off',
+		userLevel: 'User level',
+		projectLevel: 'Project level',
+		done: 'Done',
+		doneDesc: 'finish',
+		allProjects: 'all projects',
+		thisProject: 'this project only',
+		scopeTitle: (preset: string) => `Which file should config go to? (current preset: ${preset})`,
+		editorTitle: (scope: string, changed: number) =>
+			`Status line · writing ${scope} · ${changed} changed this run`,
+		presetTitle: 'Pick a preset (a single key can still override it)',
+		langTitle: 'Pick the ui language',
+		numberTitle: (name: string, expect: string, max?: number) =>
+			`${name} (${expect}${max === undefined ? '' : `, max ${max}`})`,
+		boolTitle: (name: string, desc: string) => `${name}: ${desc}`,
+		confirmTitle: (name: string, value: string) => `Write ${name} = ${value}?`,
+		confirmBody: (path: string, name: string, current: string, source: string, value: string) =>
+			`${path}\n${name}: current ${current} (${source}) → write ${value}`,
+		writeFailed: (msg: string) => `Write failed: ${msg}`,
+		shadowed: (name: string, effective: string, source: string, scope: string) =>
+			`${name} still resolves to ${effective} (source: ${source}) — the value just written to ${scope} is overridden by higher precedence; the line won't change`,
+		wrote: (path: string, changes: readonly string[]) =>
+			`Wrote ${path}:\n${changes.map(change => `  ${change}`).join('\n')}`,
+		noChanges: 'No changes.',
+		needTui: `Interactive config needs the TUI interaction modal (cmd.ui.select / input / confirm, requires cmdc ≥ ${MIN_HOST_VERSION}).`,
+		noModal: 'No interaction modal this run (expected headless) — nothing was written.',
+		noModalShort: 'Interactive config needs the TUI (select returns undefined headless; nothing was written).',
+		lineLabel: 'Status line',
+		dataLabel: 'Data',
+		colon: ': ',
+		configHead: 'Config (key / default / effective / source):',
+		filesLabel: 'Files',
+		windowUnknown: ' (window unknown)',
+		priceUnknown: ' (price unknown)',
+		notRepo: 'not a repo',
+		unknown: 'unknown',
+		restored: (v: string) => ` (incl. restored ${v})`,
+		subNote: (v: string) => ` (~${v}, not counted in cost above)`,
+		requires: (v: string) => ` (requires ≥ ${v})`,
+		rendering: 'rendering',
+		headless: 'not rendered this run (headless)',
+		activeTag: ' (active)',
+		brokenTag: ' (unreadable)',
+		noFilesNote: '(neither config file took effect — check the source column per row: builtin / preset / CLI)',
+		brokenFile: (path: string) =>
+			`${path} is unreadable (invalid JSON or top level is not an object) — ignored entirely; no key applied`,
+		unknownKey: (key: string, source: string) => `unknown key "${key}" (${source}) — typo?`,
+		badValue: (key: string, expect: string, actual: string, source: string) =>
+			`"${key}" has an unusable value: expected ${expect}, got ${actual} (${source}) — ignored`,
+		unknownPreset: (value: string, source: string, effective: string) =>
+			`unknown preset ${value} (${source}) — valid: ${PRESET_NAMES.join(' / ')}; ${
+				effective === 'full' ? 'treated as full' : `effective preset=${effective}`
+			}`,
+		unknownLang: (value: string, source: string, effective: string) =>
+			`unknown lang ${value} (${source}) — valid: zh / en; ${
+				effective === 'zh' ? 'treated as zh' : `effective lang=${effective}`
+			}`,
+		seedDrift:
+			'the transcript has usage/model records but none matched the expected tail shape — ' +
+			'the internal format may have changed; restored cost/context may be off',
+		tip: 'Tip: /statusline config edits interactively (writes + repaints right away, no /reload)',
+		oldHost: (min: string, current: string) =>
+			`statusline requires cmdc ≥ ${min} (current ${current}): old hosts are not supported; disabled. Update cmdc (cmdc update) and reopen the session.`,
+		slowGit: (durationS: string, intervalS: number, gapS: number) =>
+			`git status took ${durationS}s in this repo (≥ refresh=${intervalS}s): ` +
+			`polling slowed to every ${gapS}s. Set refresh=0 to stop polling entirely.`,
+	},
+} as const;
+
+// 两份文案形状必须完全一致；字符串字段宽化成 string，让 zh/en 可互赋
+type Strings = {readonly [K in keyof (typeof L10N)['zh']]: (typeof L10N)['zh'][K] extends string ? string : (typeof L10N)['zh'][K]};
+
 export default function (cmd: ModApi): void {
-	// 版本闸门放在最前面，而且是硬闸门：本 mod 不支持旧宿主，也不做降级。
+	// 配置文件先读（纯文件 IO，不依赖任何已注册的 flag）：版本提示与 flag 描述的语言
+	// 都只看文件里的 lang —— 这两个文案在注册期就要出，那会儿 getFlag 还不可用。
+	let {config, sources: configSources, origin: configOrigin, broken: configBroken} = loadConfig(
+		cmd.cwd,
+	);
+	const fileLang = langOf(config['lang']) ?? 'zh';
+
+	// 版本闸门：本 mod 不支持旧宿主，也不做降级。
 	// 读到版本且确实偏旧 → 提示升级后立即停用，连 flag 与命令都不注册 ——
 	// 宁可什么都不做，也不要留下一个「有反应但不正确」的底栏。
 	// 版本读不到时不猜（那种情况下无从判断，按可用处理，报告里标成 cmdc=未知）。
 	const host = hostVersion();
 	if (host !== undefined && !versionAtLeast(host, MIN_HOST_VERSION)) {
-		const message = `statusline 需要 cmdc ≥ ${MIN_HOST_VERSION}（当前 ${host}）：本 mod 不支持旧版本，已停用。请先更新 cmdc（cmdc update），再重开会话。`;
+		const message = L10N[fileLang].oldHost(MIN_HOST_VERSION, host);
 		try {
 			cmd.ui.notify(message, 'error');
 		} catch {
@@ -966,29 +1203,13 @@ export default function (cmd: ModApi): void {
 		cmd.addFlag(spec.name, {
 			type: spec.type,
 			default: spec.default,
-			description: spec.description,
+			// 描述文本此刻只能看配置文件里的 lang：flag 还没注册，CLI 覆盖无从谈起
+			description: fileLang === 'en' ? spec.descriptionEn : spec.description,
 		});
 	}
 
-	let {config, sources: configSources, origin: configOrigin, broken: configBroken} = loadConfig(
-		cmd.cwd,
-	);
-
-	const snapshot: Snapshot = {
-		isRepo: false,
-		ahead: 0,
-		behind: 0,
-		staged: 0,
-		modified: 0,
-		untracked: 0,
-		costUsd: 0,
-		subTokens: 0,
-	};
-	let sessionId: string | undefined;
+	let session = freshSession();
 	let requestStartedAt = 0;
-	let seededCost = 0;
-	let sessionCost = 0;
-	let seeded = false;
 	let timer: NodeJS.Timeout | undefined;
 	// git 的自适应闸门：读完的时刻（不是开始的时刻）+ 上次实测耗时 + 是否已经为「慢」提醒过
 	let gitFinishedAt = 0;
@@ -1009,30 +1230,60 @@ export default function (cmd: ModApi): void {
 		return raw.toLowerCase();
 	};
 
-	const sourceLabel = (path: string | undefined): string =>
-		path === undefined ? '内置默认' : path === userConfigPath() ? '用户' : '项目';
+	// 生效来源是数据不是字符串：文案延迟到渲染处按当前 lang 出，
+	// 否则 lang=en 的报告里会混进中文的「命令行/预设 x」。
+	type FlagSource =
+		| {kind: 'cli'}
+		| {kind: 'file'; path?: string}
+		| {kind: 'preset'; name: string}
+		| {kind: 'default'};
 
 	// 唯一的取值解析入口：flag() / flagNumber() / 诊断表都走它，
 	// 这样「表里写的生效值」与「实际用的值」不可能漂移。
 	// 优先级：命令行（异于内置默认）> 配置文件 > preset > 内置默认。
-	const resolveFlag = (name: string): {value: unknown; source: string} => {
+	const resolveFlag = (name: string): {value: unknown; source: FlagSource} => {
 		const spec = FLAG_BY_NAME.get(name);
 		const base = spec?.default;
 		const cli = cmd.getFlag(name);
 		if (spec && typeof cli === typeof base && cli !== base) {
-			return {value: canonical(spec, cli), source: '命令行'};
+			return {value: canonical(spec, cli), source: {kind: 'cli'}};
 		}
 		const configured = config[name];
 		if (spec && configured !== undefined && acceptsValue(spec, configured)) {
-			return {value: canonical(spec, configured), source: sourceLabel(configOrigin[name])};
+			return {value: canonical(spec, configured), source: {kind: 'file', path: configOrigin[name]}};
 		}
 		const preset = presetValue(presetName(), name);
 		// 预设取值与内置默认相同时不报「预设 x」——那行字不含信息（full 就是内置默认的别名）
 		if (preset !== undefined && preset !== base) {
-			return {value: preset, source: `预设 ${presetName()}`};
+			return {value: preset, source: {kind: 'preset', name: presetName()}};
 		}
-		return {value: preset ?? base, source: '内置默认'};
+		return {value: preset ?? base, source: {kind: 'default'}};
 	};
+
+	const currentLang = (): Lang => langOf(resolveFlag('lang').value) ?? 'zh';
+	const s = (): Strings => L10N[currentLang()];
+
+	const sourceText = (source: FlagSource): string => {
+		const t = s();
+		switch (source.kind) {
+			case 'cli':
+				return t.cli;
+			case 'file':
+				return source.path === undefined
+					? t.builtin
+					: source.path === userConfigPath()
+						? t.userScope
+						: t.projectScope;
+			case 'preset':
+				return t.presetSource(source.name);
+			default:
+				return t.builtin;
+		}
+	};
+
+	// 键描述的语言也按生效 lang 实时切（注册期那份描述文本改不动，但交互列表是我们自己画的）
+	const specDesc = (spec: FlagSpec): string =>
+		currentLang() === 'en' ? spec.descriptionEn : spec.description;
 
 	// 没有 fallback 参数：默认值只由注册表定，调用点再传一个只会有第二个「事实来源」
 	const flag = (name: string): boolean => resolveFlag(name).value === true;
@@ -1049,19 +1300,25 @@ export default function (cmd: ModApi): void {
 		));
 	};
 
-	// JSON 里写了但我们不认识的键（拼错）、取值不可用的键、认不出的 preset —— 全部点名，
+	// JSON 里写了但我们不认识的键（拼错）、取值不可用的键、认不出的 preset / lang —— 全部点名，
 	// 否则用户改了配置却毫无反馈，只会以为「这功能坏了」
 	const configWarnings = (): string[] => {
+		const t = s();
 		const warnings: string[] = [];
 		for (const [key, path] of Object.entries(configOrigin)) {
 			const spec = FLAG_BY_NAME.get(key);
 			if (!spec) {
-				warnings.push(`未知键 "${key}"（${sourceLabel(path)}）—— 拼错了？`);
+				warnings.push(t.unknownKey(key, sourceText({kind: 'file', path})));
 				continue;
 			}
 			if (!acceptsValue(spec, config[key])) {
 				warnings.push(
-					`"${key}" 的取值不可用：期望 ${describeExpectation(spec)}，实际 ${JSON.stringify(config[key])}（${sourceLabel(path)}）—— 已忽略`,
+					t.badValue(
+						key,
+						describeExpectation(spec, currentLang()),
+						JSON.stringify(config[key]),
+						sourceText({kind: 'file', path}),
+					),
 				);
 			}
 		}
@@ -1070,18 +1327,28 @@ export default function (cmd: ModApi): void {
 		const configured = config['preset'];
 		const bogus =
 			typeof cliPreset === 'string' && cliPreset !== 'full' && !isPresetName(cliPreset.toLowerCase())
-				? {value: cliPreset, where: '命令行'}
+				? {value: cliPreset, where: t.cli}
 				: typeof configured === 'string' && !isPresetName(configured.toLowerCase())
-					? {value: configured, where: sourceLabel(configOrigin['preset'])}
+					? {value: configured, where: sourceText({kind: 'file', path: configOrigin['preset']})}
 					: undefined;
 		if (bogus) {
 			// 落点要按「实际会生效的那个预设」说：命令行压着配置时，说「已按 full 处理」就是假的
 			const effective = isPresetName(presetName()) ? presetName() : 'full';
-			warnings.push(
-				`未知预设 ${JSON.stringify(bogus.value)}（${bogus.where}）—— 可用：${PRESET_NAMES.join(' / ')}；${
-					effective === 'full' ? '已按 full 处理' : `当前生效的是 preset=${effective}`
-				}`,
-			);
+			warnings.push(t.unknownPreset(JSON.stringify(bogus.value), bogus.where, effective));
+		}
+		// lang 同 preset：字符串但认不出（如 "fr"）→ 点名 + 实际按 zh 走；非字符串已被上面 badValue 兜住
+		const cliLang = cmd.getFlag('lang');
+		const confLang = config['lang'];
+		const bogusLang =
+			typeof cliLang === 'string' && cliLang !== 'zh' && langOf(cliLang) === undefined
+				? {value: cliLang, where: t.cli}
+				: typeof confLang === 'string' && langOf(confLang) === undefined
+					? {value: confLang, where: sourceText({kind: 'file', path: configOrigin['lang']})}
+					: undefined;
+		if (bogusLang) {
+			// 落点按「实际生效的」说，与 preset 同理：命令行 lang=en 压着文件里的坏值时，
+			// 报「已按 zh 处理」就是在撒谎
+			warnings.push(t.unknownLang(JSON.stringify(bogusLang.value), bogusLang.where, currentLang()));
 		}
 		return warnings;
 	};
@@ -1121,31 +1388,44 @@ export default function (cmd: ModApi): void {
 	const cwdName = (): string | undefined => cwdBasename(cmd.cwd);
 
 	const seedTitle = (): void => {
-		if (!flag('name') || !sessionId || snapshot.title) return;
-		const title = readSessionTitle(sessionId, cmd.cwd);
+		const snapshot = session.snapshot;
+		if (!flag('name') || !session.id || snapshot.title) return;
+		const title = readSessionTitle(session.id, cmd.cwd);
 		if (title) snapshot.title = title;
 	};
 
 	// 显示值 = 从 transcript 恢复的历史累计 + 本进程新产生的部分（两部分都只算一次，不会重复计）
 	const updateCost = (): void => {
-		snapshot.costUsd = seededCost + sessionCost;
+		session.snapshot.costUsd = session.seededCost + session.sessionCost;
 	};
 
 	// 配置里的模型 / effort：只补还空着的段，第一次请求回来之后就不必再读盘
 	const seedFromConfig = (): void => {
+		const snapshot = session.snapshot;
 		if (snapshot.model && snapshot.effort) return;
 		const {model, reasoningEffort} = readUserConfig();
 		if (!snapshot.model && model) snapshot.model = model;
 		if (!snapshot.effort && snapshot.model) snapshot.effort = reasoningEffort[snapshot.model];
 	};
 
+	// 事件携带 sessionId 且不是当前会话的 → 整条丢弃：会话被替换后，旧会话迟到的
+	// 事件（在途请求收尾、titled、turn_end 等）不许写进新会话的状态。
+	// 两边有一边不知道 id 就没法判，放行 —— 宁可多画一次，也不能把正常事件滤没了。
+	const forCurrentSession = (event: unknown): boolean => {
+		const id = (event as {sessionId?: unknown}).sessionId;
+		return typeof id !== 'string' || session.id === undefined || id === session.id;
+	};
+
 	// 恢复会话：transcript 记录的是实际发生过的事，压过配置里读来的猜测值
 	const seedSession = async (): Promise<void> => {
-		if (seeded || !sessionId) return;
-		seeded = true;
-		const seed = await readSessionSeed(sessionId, cmd.cwd);
-		if (!seed) return;
-		if (seed.costUsd > 0) seededCost = seed.costUsd;
+		if (session.seeded || !session.id) return;
+		session.seeded = true;
+		const snapshot = session.snapshot;
+		const seed = await readSessionSeed(session.id, cmd.cwd);
+		// await 期间会话可能已被换掉：那份 transcript 属于旧会话，整个丢弃
+		if (!seed || session.snapshot !== snapshot) return;
+		if (seed.drifted) session.seedDrifted = true;
+		if (seed.costUsd > 0) session.seededCost = seed.costUsd;
 		if (seed.model) snapshot.model = seed.model;
 		if (seed.effort) snapshot.effort = seed.effort;
 		if (seed.usage) {
@@ -1166,8 +1446,11 @@ export default function (cmd: ModApi): void {
 		if (intervalMs <= 0 || gitDurationMs < intervalMs) return;
 		gitSlowNotified = true;
 		cmd.ui.notify(
-			`本仓库 git status 用了 ${(gitDurationMs / 1000).toFixed(1)}s（≥ refresh=${intervalMs / 1000}s）：` +
-				`已自动放慢到每 ${Math.round(gitGapMs(gitDurationMs) / 1000)}s 读一次。想彻底关掉轮询就把 refresh 设为 0。`,
+			s().slowGit(
+				(gitDurationMs / 1000).toFixed(1),
+				intervalMs / 1000,
+				Math.round(gitGapMs(gitDurationMs) / 1000),
+			),
 			'warning',
 		);
 	};
@@ -1199,6 +1482,8 @@ export default function (cmd: ModApi): void {
 							modified: 0,
 							untracked: 0,
 						};
+			// git 结果是仓库属性、不随会话变：写进「当前」会话（await 期间会话被换掉也不丢这次读）
+			const snapshot = session.snapshot;
 			snapshot.isRepo = info.isRepo;
 			snapshot.branch = info.branch;
 			snapshot.ahead = info.ahead;
@@ -1207,8 +1492,8 @@ export default function (cmd: ModApi): void {
 			snapshot.modified = info.modified;
 			snapshot.untracked = info.untracked;
 		} catch {
-			snapshot.isRepo = false;
-			snapshot.branch = undefined;
+			session.snapshot.isRepo = false;
+			session.snapshot.branch = undefined;
 		} finally {
 			clearTimeout(killer);
 			gitReading = false;
@@ -1221,7 +1506,7 @@ export default function (cmd: ModApi): void {
 	};
 
 	const composer = (): string =>
-		composeLine(snapshot, segments(), {
+		composeLine(session.snapshot, segments(), {
 			color: colorEnabled(),
 			rawModel: flag('raw-model'),
 			mode: colorMode(),
@@ -1267,10 +1552,17 @@ export default function (cmd: ModApi): void {
 	cmd.hooks({
 		onSessionStart: info => {
 			const data = info as unknown as SessionEvent;
-			if (typeof data.sessionId === 'string') sessionId = data.sessionId;
+			const id = typeof data.sessionId === 'string' ? data.sessionId : undefined;
+			// 宿主会在同进程换会话（onSessionEnd 的 reason 有 'replaced'）：id 变了就整体重建，
+			// 否则上一个会话的名字/花费/seed 标记会原样漏进新会话。同一 id 再触发不重置——
+			// 否则会把正在进行的会话的累计清零。
+			if (id !== undefined && id !== session.id) {
+				session = freshSession(id);
+				requestStartedAt = 0;
+			}
 			seedFromConfig();
 			seedTitle();
-			seedSession();
+			void seedSession();
 			startTimer();
 			// 幂等：会话被替换时若 start 再次触发，避免监听器叠加
 			process.stdout.off('resize', onResize);
@@ -1288,7 +1580,10 @@ export default function (cmd: ModApi): void {
 
 	cmd.on('run_start', event => {
 		const data = event as unknown as SessionEvent;
-		if (!sessionId && typeof data.sessionId === 'string') sessionId = data.sessionId;
+		if (!forCurrentSession(event)) return;
+		// 只在还没拿到 id 时收养：run 的 sessionId 理应属于当前会话，
+		// 换个 id 就重置的话，一次意外的嵌套 run 会把整份会话状态抹掉
+		if (session.id === undefined && typeof data.sessionId === 'string') session.id = data.sessionId;
 		seedFromConfig();
 		seedTitle();
 		void seedSession();
@@ -1296,22 +1591,26 @@ export default function (cmd: ModApi): void {
 	});
 
 	cmd.on('session_titled', event => {
+		if (!forCurrentSession(event)) return;
 		const data = event as unknown as {title?: unknown};
 		if (typeof data.title === 'string' && data.title.trim()) {
-			snapshot.title = data.title;
+			session.snapshot.title = data.title;
 		}
 		refresh();
 	});
 
 	cmd.on('model_request_start', event => {
+		if (!forCurrentSession(event)) return;
 		const data = event as unknown as ModelEvent;
-		if (typeof data.model === 'string') snapshot.model = data.model;
+		if (typeof data.model === 'string') session.snapshot.model = data.model;
 		requestStartedAt = Date.now();
 		refresh();
 	});
 
 	cmd.on('model_request_end', event => {
+		if (!forCurrentSession(event)) return;
 		const data = event as unknown as ModelEvent;
+		const snapshot = session.snapshot;
 		if (typeof data.model === 'string') snapshot.model = data.model;
 		if (typeof data.effort === 'string') snapshot.effort = data.effort;
 		if (typeof data.usage?.inputTokens === 'number') {
@@ -1322,7 +1621,7 @@ export default function (cmd: ModApi): void {
 			if (hit !== undefined) snapshot.cacheHit = hit;
 			const cost = estimateCost(data.usage, snapshot.model);
 			if (cost > 0) {
-				sessionCost += cost;
+				session.sessionCost += cost;
 				updateCost();
 			}
 			const output = data.usage.outputTokens ?? 0;
@@ -1337,25 +1636,30 @@ export default function (cmd: ModApi): void {
 	// 子代理的模型请求不走 model_request_*（实测），用量只能从 subagent_stop 折进来；
 	// 产品自身也不把子代理 token 计入 transcript，故这里只累计 token、不改动精确花费。
 	cmd.on('subagent_stop', event => {
+		if (!forCurrentSession(event)) return;
 		const data = event as unknown as SubagentStopEvent;
 		if (typeof data.tokensUsed === 'number' && data.tokensUsed > 0) {
-			snapshot.subTokens += data.tokensUsed;
+			session.snapshot.subTokens += data.tokensUsed;
 			refresh();
 		}
 	});
 
-	cmd.on('turn_end', () => refresh());
+	cmd.on('turn_end', event => {
+		if (!forCurrentSession(event)) return;
+		refresh();
+	});
 
 	cmd.on('config_setting_changed', event => {
+		if (!forCurrentSession(event)) return;
 		const data = event as unknown as ConfigChangedEvent;
 		if (data.setting === 'model' && typeof data.value === 'string') {
-			snapshot.model = data.value;
+			session.snapshot.model = data.value;
 			// effort 是按模型存的，换模型就得换值——配置里没有就清空，留着上一个模型的 effort 是错的
-			snapshot.effort = readUserConfig().reasoningEffort[data.value];
+			session.snapshot.effort = readUserConfig().reasoningEffort[data.value];
 		}
 		// /effort 改完立刻重画，不必等下一次 model_request_end 才更新
 		if (data.setting === 'effort' && typeof data.value === 'string') {
-			snapshot.effort = data.value;
+			session.snapshot.effort = data.value;
 		}
 		refresh();
 	});
@@ -1377,6 +1681,8 @@ export default function (cmd: ModApi): void {
 	// 诊断：一张「键 / 默认 / 生效 / 来源」表 + 告警。
 	// 它同时解决「键名没入口」（不用翻 README）和「改了没生效也没反馈」（未知键/坏值点名）。
 	const statuslineReport = (): string => {
+		const t = s();
+		const snapshot = session.snapshot;
 		const plain = composeLine(snapshot, segments(), {
 			color: false,
 			rawModel: true,
@@ -1395,26 +1701,26 @@ export default function (cmd: ModApi): void {
 			`model=${snapshot.model ?? '-'}`,
 			`effort=${snapshot.effort ?? '-'}`,
 			`ctx=${snapshot.contextTokens ? formatTokens(snapshot.contextTokens) : '-'}${
-				window ? `/${formatWindow(window)}` : '（窗口未知）'
+				window ? `/${formatWindow(window)}` : t.windowUnknown
 			}`,
 			`cache=${snapshot.cacheHit !== undefined ? formatRate(snapshot.cacheHit) : '-'}`,
 			`cost=${snapshot.costUsd > 0 ? formatCost(snapshot.costUsd) : '-'}${
-				seededCost > 0 ? `（含恢复 ${formatCost(seededCost)}）` : ''
-			}${priced ? '' : '（单价未知）'}`,
+				session.seededCost > 0 ? t.restored(formatCost(session.seededCost)) : ''
+			}${priced ? '' : t.priceUnknown}`,
 			`speed=${snapshot.speed ? `${Math.round(snapshot.speed)} tok/s` : '-'}`,
-			`sub=${snapshot.subTokens > 0 ? `${formatTokens(snapshot.subTokens)}（约 ${formatCost(subEstimate)}，未计入上面 cost）` : '-'}`,
+			`sub=${snapshot.subTokens > 0 ? `${formatTokens(snapshot.subTokens)}${t.subNote(formatCost(subEstimate))}` : '-'}`,
 			`name=${snapshot.title ?? '-'}`,
-			`git=${snapshot.isRepo ? (snapshot.branch ?? '-') : '非仓库'}`,
+			`git=${snapshot.isRepo ? (snapshot.branch ?? '-') : t.notRepo}`,
 			`render=${asciiOnly() ? 'ascii' : colorMode()}`,
-			`width=${terminalWidth() || '未知'}`,
-			`cmdc=${host ?? '未知'}（本 mod 要求 ≥ ${MIN_HOST_VERSION}）`,
-			`footer=${cmd.ui.capabilities.status ? '渲染中' : '本运行不渲染（headless）'}`,
+			`width=${terminalWidth() || t.unknown}`,
+			`cmdc=${host ?? t.unknown}${t.requires(MIN_HOST_VERSION)}`,
+			`footer=${cmd.ui.capabilities.status ? t.rendering : t.headless}`,
 		].join(' | ');
 
 		const pad = (text: string, width: number): string => text.padEnd(width, ' ');
 		const rows = FLAG_SPECS.map(spec => {
 			const {value, source} = resolveFlag(spec.name);
-			return [spec.name, String(spec.default), displayValue(spec, value), source];
+			return [spec.name, String(spec.default), displayValue(spec, value), sourceText(source)];
 		});
 		// 列宽按内容算：写死的宽度会在值变长时和下一列黏在一起（preset=minimal 恰好 7 字符）
 		const columnWidth = (index: number): number =>
@@ -1427,30 +1733,33 @@ export default function (cmd: ModApi): void {
 		const files = [userConfigPath(), projectConfigPath(cmd.cwd)]
 			.map(path =>
 				configSources.includes(path)
-					? `${path}（生效）`
+					? `${path}${t.activeTag}`
 					: configBroken.includes(path)
-						? `${path}（读不动）`
+						? `${path}${t.brokenTag}`
 						: path,
 			)
 			.join(' + ');
 
 		const lines = [
-			`状态栏：${plain}`,
-			`数据：${state}`,
-			`配置（键 / 默认 / 生效 / 来源）：`,
+			`${t.lineLabel}${t.colon}${plain}`,
+			`${t.dataLabel}${t.colon}${state}`,
+			t.configHead,
 			...table,
-			`文件：${files}`,
+			`${t.filesLabel}${t.colon}${files}`,
 		];
 		if (configSources.length === 0) {
 			// 不能写「全部走内置默认」：没有配置文件时，命令行与预设照样能定值，
 			// 那样写会和上面表格里的「预设 x / 命令行」自相矛盾
-			lines.push('（两份配置文件都没有生效 —— 生效值逐行看「来源」列：内置默认 / 预设 / 命令行）');
+			lines.push(t.noFilesNote);
 		}
 		for (const path of configBroken) {
-			lines.push(`⚠ ${path} 读不动（JSON 非法或顶层不是对象）—— 已整体忽略，里面的键一个都没生效`);
+			lines.push(`⚠ ${t.brokenFile(path)}`);
+		}
+		if (session.seedDrifted) {
+			lines.push(`⚠ ${t.seedDrift}`);
 		}
 		for (const warning of configWarnings()) lines.push(`⚠ ${warning}`);
-		lines.push('提示：/statusline config 交互式修改（选完即写入并立刻重绘，不用 /reload）');
+		lines.push(t.tip);
 		return lines.join('\n');
 	};
 
@@ -1464,34 +1773,29 @@ export default function (cmd: ModApi): void {
 			typeof ui?.input === 'function' &&
 			typeof ui?.confirm === 'function';
 		if (!canAsk) {
-			return [
-				`交互式配置需要 TUI 与交互面板（cmd.ui.select / input / confirm，需 cmdc ≥ ${MIN_HOST_VERSION}）。`,
-				`这次运行没有交互面板（headless 下属正常）——没有写任何文件。`,
-				'',
-				statuslineReport(),
-			].join('\n');
+			return [s().needTui, s().noModal, '', statuslineReport()].join('\n');
 		}
-		const scope = await ui.select({
-			title: `把配置写到哪一份？（当前预设 ${presetName()}）`,
+		// 作用域存语义键不存 label：用户在流程中改 lang 后，旧的 label 字符串就对不上了
+		const scopePick = await ui.select({
+			title: s().scopeTitle(presetName()),
 			options: [
-				{label: '用户级', description: `${userConfigPath()} · 所有项目`},
-				{label: '项目级', description: `${projectConfigPath(cmd.cwd)} · 只影响这个项目`},
+				{label: s().userLevel, description: `${userConfigPath()} · ${s().allProjects}`},
+				{label: s().projectLevel, description: `${projectConfigPath(cmd.cwd)} · ${s().thisProject}`},
 			],
 		});
-		if (scope === undefined) {
-			return [
-				'交互式配置需要 TUI（headless 下选择器返回 undefined，不会写任何文件）。',
-				'',
-				statuslineReport(),
-			].join('\n');
+		if (scopePick === undefined) {
+			return [s().noModalShort, '', statuslineReport()].join('\n');
 		}
-		const path = scope === '用户级' ? userConfigPath() : projectConfigPath(cmd.cwd);
+		const scopeKey = scopePick === s().userLevel ? 'user' : 'project';
+		const path = scopeKey === 'user' ? userConfigPath() : projectConfigPath(cmd.cwd);
+		const scopeLabel = () => (scopeKey === 'user' ? s().userLevel : s().projectLevel);
 		const changes: string[] = [];
 		const notes: string[] = [];
 
 		for (;;) {
+			const t = s();
 			const pick = await ui.select({
-				title: `状态栏 · 写入${scope} · 本次已改 ${changes.length} 项`,
+				title: t.editorTitle(scopeLabel(), changes.length),
 				options: [
 					...FLAG_SPECS.map(spec => {
 						const {value} = resolveFlag(spec.name);
@@ -1499,40 +1803,49 @@ export default function (cmd: ModApi): void {
 							? String(clampedNumber(spec, value))
 							: typeof value === 'boolean'
 								? value
-									? '开'
-									: '关'
+									? t.on
+									: t.off
 								: String(value);
-						return {label: spec.name, description: `${shown} · ${spec.description}`};
+						return {label: spec.name, description: `${shown} · ${specDesc(spec)}`};
 					}),
-					{label: '完成', description: '结束配置'},
+					{label: t.done, description: t.doneDesc},
 				],
 			});
-			if (pick === undefined || pick === '完成') break;
+			if (pick === undefined || pick === t.done) break;
 			const spec = FLAG_BY_NAME.get(pick);
 			if (!spec) continue;
 
 			let value: unknown;
 			if (spec.name === 'preset') {
 				value = await ui.select({
-					title: '选一个预设（单个键仍可覆盖它）',
+					title: t.presetTitle,
 					options: PRESET_NAMES.map(name => ({label: name, description: presetHint(name)})),
+				});
+			} else if (spec.name === 'lang') {
+				// lang 是字符串键但不是自由输入：写别的值只会吃到「未知语言」告警
+				value = await ui.select({
+					title: t.langTitle,
+					options: [
+						{label: 'zh', description: '中文'},
+						{label: 'en', description: 'English'},
+					],
 				});
 			} else if (spec.numeric) {
 				const typed = await ui.input({
-					title: `${spec.name}（${describeExpectation(spec)}，最大 ${spec.max}）`,
+					title: t.numberTitle(spec.name, describeExpectation(spec, currentLang()), spec.max),
 					placeholder: String(spec.default),
 				});
 				const parsed = Number(typed);
 				if (typed !== undefined && Number.isFinite(parsed)) value = parsed;
 			} else {
 				const picked = await ui.select({
-					title: `${spec.name}：${spec.description}`,
+					title: t.boolTitle(spec.name, specDesc(spec)),
 					options: [
-						{label: '开', description: 'true'},
-						{label: '关', description: 'false'},
+						{label: t.on, description: 'true'},
+						{label: t.off, description: 'false'},
 					],
 				});
-				if (picked !== undefined) value = picked === '开';
+				if (picked !== undefined) value = picked === t.on;
 			}
 			if (value === undefined) continue;
 
@@ -1540,15 +1853,21 @@ export default function (cmd: ModApi): void {
 			// 只看自己这份会让用户以为改动是多余的（或反过来以为会变）
 			const effective = resolveFlag(spec.name);
 			const agreed = await ui.confirm({
-				title: `写入 ${spec.name} = ${JSON.stringify(value)}？`,
-				message: `${path}\n${spec.name}: 当前 ${displayValue(spec, effective.value)}（${effective.source}）→ 写入 ${JSON.stringify(value)}`,
+				title: s().confirmTitle(spec.name, JSON.stringify(value)),
+				message: s().confirmBody(
+					path,
+					spec.name,
+					displayValue(spec, effective.value),
+					sourceText(effective.source),
+					JSON.stringify(value),
+				),
 			});
 			if (!agreed) continue;
 
 			try {
 				writeConfigKey(path, spec.name, value);
 			} catch (error) {
-				ui.notify(`写入失败：${error instanceof Error ? error.message : String(error)}`, 'error');
+				ui.notify(s().writeFailed(error instanceof Error ? error.message : String(error)), 'error');
 				continue;
 			}
 			changes.push(`${spec.name}=${JSON.stringify(value)}`);
@@ -1562,21 +1881,27 @@ export default function (cmd: ModApi): void {
 			const applied = resolveFlag(spec.name);
 			if (displayValue(spec, applied.value) !== displayValue(spec, value)) {
 				notes.push(
-					`${spec.name} 实际生效的是 ${displayValue(spec, applied.value)}（来源：${applied.source}）—— 你刚写进${scope}的值被更高优先级盖住了，底栏不会变`,
+					s().shadowed(
+						spec.name,
+						displayValue(spec, applied.value),
+						sourceText(applied.source),
+						scopeLabel(),
+					),
 				);
 			}
 		}
 
 		const head =
-			changes.length > 0
-				? `已写入 ${path}：\n${changes.map(change => `  ${change}`).join('\n')}`
-				: '没有改动。';
+			changes.length > 0 ? s().wrote(path, changes) : s().noChanges;
 		return [head, ...notes.map(note => `⚠ ${note}`), '', statuslineReport()].join('\n');
 	};
 
 	cmd.addCommand({
 		name: 'statusline',
-		description: '查看状态栏与配置来源；`/statusline config` 交互式修改',
+		description:
+			fileLang === 'en'
+				? 'inspect the status line and config sources; `/statusline config` edits interactively'
+				: '查看状态栏与配置来源；`/statusline config` 交互式修改',
 		handler: async (context: {args?: unknown; ui?: ModApi['ui']}) => {
 			const sub = String(context?.args ?? '').trim().toLowerCase();
 			if (sub === 'config') {

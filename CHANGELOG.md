@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased
+
+- **One README instead of nine.** The eight translated `README.<lang>.md` files were folded into
+  `README.md` as stacked language sections (English first), with the language switcher turned into
+  in-page anchors — nine files that had to be kept in sync by hand are now one. The screenshot is
+  carried once, in the English section, rather than repeated nine times; the requirement line stays
+  in every section, because that is what the drift guard checks. `package.json#files` ships
+  `README.md` rather than `README*.md`.
+- The host-floor drift guard now checks the single file: it fails if the README stops stating
+  `≥ MIN_HOST_VERSION`, or if any of the nine language sections loses the line (the count must be
+  nine, so a section that silently drops its requirement is caught).
+- Comment fix: the file header and the `hostVersion()` docstring both stated the floor as `1.54.0`,
+  while `MIN_HOST_VERSION` has been `1.10.0` since it was introduced — the number was carried over
+  from the pre-research assumption into the very commit that lowered it, so no committed revision
+  ever had `1.54.0` as the constant. The header now names the constant (the number stays as a
+  parenthetical) and the docstring refers to the constant instead of repeating it, so neither can
+  drift again. The 0.6.0 entry that still read `Requires ≥ 1.54.0` now says it is the stage the
+  research below lowered.
+- **Per-session state actually resets.** The mod loads once per process, but the host can swap
+  sessions inside it (`onSessionEnd` carries `reason: 'replaced'` — navigate/resume take that
+  path). All mutable session state — title, cost, context, cache hit, sub-agent tokens, the seeded
+  markers, the session id itself — now lives in one `SessionState` object that `onSessionStart`
+  rebuilds wholesale when the id changes, so a resumed session no longer wears the previous one's
+  name and numbers. Re-firing `onSessionStart` with the same id keeps the accumulated data. The
+  transcript seed is also race-safe now: it holds the old snapshot reference across the `await` and
+  drops the result entirely if the session was replaced meanwhile.
+- **Transcript format drift is observable.** `readSessionSeed` counts usage/model records against
+  how many matched the expected tail shape; a transcript that has them but parses none sets a flag,
+  and `/statusline` prints a warning that the internal format may have changed and restored
+  cost/context may be off — a silent zero becomes a diagnosable zero.
+- **New `lang` key (`zh` / `en`, default `zh`).** The `/statusline` report, the interactive config
+  editor, flag descriptions, and every warning/notice now render in English when set —
+  `zh-CN`/`en-US` style values normalize to their base language. Unknown values are called out in
+  the report and fall back to `zh`. In the editor, `lang` is a picker, not free input. Flag
+  descriptions are registered in the config file's language (the CLI flag cannot reach them — the
+  description is emitted at registration, before flags exist).
+- **Config writes are atomic.** `writeConfigKey` writes `<file>.<pid>.tmp` and `renameSync`s it
+  over the target, so a crash mid-write can no longer leave half a JSON file that the next load
+  would discard wholesale.
+- **Types are real now.** `index.ts` imported `ModApi` from `@commandcode/harness`, which is not
+  published — the declaration is now a local `mod-api.d.ts` written against the bundled
+  mod-builder API reference, and `npm run typecheck` (`tsc --noEmit`) runs in CI and in
+  `prepublishOnly`. `package.json#files` ships `mod-api.d.ts` and drops `test/` and `scripts/`,
+  which were published but never needed at runtime.
+
 ## 0.6.1
 
 - The `git status` poll is now bounded, and it can no longer hold up the rest of the row. Both
@@ -51,14 +96,14 @@
   effective value the report shows cannot drift from the value the footer uses.
 
 - Adversarial pass over all of the above, from a fresh angle, plus the host-version gate:
-  - **Requires Command Code ≥ 1.54.0** (`MIN_HOST_VERSION`), and older builds are not supported at
-    all. `cmd` exposes no version field (verified with a probe), so the mod reads it from the
-    `package.json` beside the CLI entry — and on an older host it **disables itself**: one error
-    notice in the feed pointing at `cmdc update`, and nothing else registered (no flags, no
-    command, no footer, no git). It deliberately does not degrade, because a footer that merely
-    looks plausible is worse than no footer. A version it cannot determine is never guessed at —
-    the mod runs normally and the report says `cmdc=未知` — so an unusual install layout cannot
-    brick a working setup.
+  - **Requires Command Code ≥ 1.54.0** at this stage (`MIN_HOST_VERSION`) — lowered to `1.10.0` by
+    the research below — and older builds are not supported at all. `cmd` exposes no version field
+    (verified with a probe), so the mod reads it from the `package.json` beside the CLI entry — and
+    on an older host it **disables itself**: one error notice in the feed pointing at `cmdc update`,
+    and nothing else registered (no flags, no command, no footer, no git). It deliberately does not
+    degrade, because a footer that merely looks plausible is worse than no footer. A version it
+    cannot determine is never guessed at — the mod runs normally and the report says `cmdc=未知` —
+    so an unusual install layout cannot brick a working setup.
   - `{"preset": 123}` counted as a usable value, so the report showed `preset  123  用户` while the
     footer actually ran `full`. Non-numeric string keys now require a string.
   - A config written by Notepad (UTF-8 with a BOM) is valid JSON that `JSON.parse` rejects: the file

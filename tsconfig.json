@@ -1,0 +1,13 @@
+{
+	"compilerOptions": {
+		"target": "esnext",
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"strict": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"types": ["node"],
+		"forceConsistentCasingInFileNames": true
+	},
+	"include": ["index.ts", "mod-api.d.ts"]
+}
