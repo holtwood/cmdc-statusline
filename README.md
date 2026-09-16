@@ -11,7 +11,7 @@ bar, cache hit rate, session cost, output speed, sub-agent usage, session name a
 state, rendered under the input panel via `ui.setStatus()`. Every segment is configurable:
 pick a preset or toggle keys in `statusline.json`, per user or per project.
 
-![statusline: deepseek-v4.1-flash │ max │ ██████░░░░░░ 96k (47%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project](docs/statusline.png)
+![statusline: deepseek-v4.1-flash │ max │ ██████░░░░░░ 470k (47%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project](docs/statusline.png)
 
 ### Install
 
