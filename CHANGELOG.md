@@ -46,6 +46,16 @@
 - CI runs the suite on the declared minimum Node (22.18.0) alongside 24: the tests import
   TypeScript directly and depend on native type stripping, which is precisely what that floor is
   about, and a 24-only matrix never proved it.
+- Internal cleanup, nothing user-visible: `index.ts` shed eleven exports nobody else used —
+  `noUnusedLocals`, `noUnusedParameters` and `noFallthroughCasesInSwitch` are on so dead code
+  cannot come back — the two generated model tables moved to an appendix at the end of the file,
+  the seeding trio is one named step, and `gen-model-tables.py` no longer reports an update after
+  a no-op write.
+- The footer probe is one named `rendersFooter()` and deliberately stricter: it requires
+  `capabilities.status === true` rather than any truthy value — identical on the real host (the
+  flag is a real boolean), different only for a host that would answer a truthy non-`true`.
+- The narrow-terminal drop loop is bounded by `DROP_STEPS_MAX` (64): unreachable in normal
+  operation, it is the floor under a width/drop logic bug rather than a real limit.
 - 318 checks.
 
 ## 0.6.1
