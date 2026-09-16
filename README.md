@@ -13,8 +13,6 @@ pick a preset or toggle keys in `statusline.json`, per user or per project.
 
 ![statusline: deepseek-v4.1-flash │ max │ ██████░░░░░░ 96k (47%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project](docs/statusline.png)
 
-**Requires Command Code ≥ 1.10.0.**
-
 ### Install
 
 ```bash
@@ -110,8 +108,6 @@ MIT
 `ui.setStatus()` 渲染在输入框下方。所有字段均可配置：在 `statusline.json` 中选预设或
 逐键开关，支持用户级与项目级覆盖。
 
-**需要 Command Code ≥ 1.10.0。**
-
 ### 安装
 
 ```bash
@@ -201,8 +197,6 @@ MIT
 `ui.setStatus()` 渲染在輸入框下方。所有欄位皆可設定：在 `statusline.json` 中選預設組合
 或逐鍵開關，支援使用者級與專案級覆蓋。
 
-**需要 Command Code ≥ 1.10.0。**
-
 ### 安裝
 
 ```bash
@@ -288,8 +282,6 @@ MIT
 使用量、セッション名、git の状態を `ui.setStatus()` で入力欄の下に表示します。
 すべてのセグメントは設定可能です — `statusline.json`（ユーザー/プロジェクトスコープ）で
 プリセットを選ぶか、キーごとに切り替えられます。
-
-**Command Code ≥ 1.10.0 が必要。**
 
 ### インストール
 
@@ -380,8 +372,6 @@ MIT
 git 상태를 `ui.setStatus()`로 입력창 아래에 표시합니다. 모든 세그먼트는 설정 가능합니다 —
 `statusline.json`(사용자/프로젝트 범위)에서 프리셋을 고르거나 키별로 켜고 끌 수 있습니다.
 
-**Command Code ≥ 1.10.0 필요.**
-
 ### 설치
 
 ```bash
@@ -470,8 +460,6 @@ modelo, barra de contexto con degradado, tasa de aciertos de caché, coste de la
 velocidad de salida, uso de subagentes, nombre de sesión y estado de git, dibujada bajo el
 panel de entrada con `ui.setStatus()`. Todos los segmentos son configurables: elige un
 preset o ajusta claves en `statusline.json` (ámbito de usuario o de proyecto).
-
-**Requiere Command Code ≥ 1.10.0.**
 
 ### Instalación
 
@@ -567,8 +555,6 @@ sous-agents, nom de session et état git, dessinée sous le panneau de saisie vi
 `ui.setStatus()`. Tous les segments sont configurables : choisissez un préréglage ou
 ajustez les clés dans `statusline.json` (portée utilisateur ou projet).
 
-**Nécessite Command Code ≥ 1.10.0.**
-
 ### Installation
 
 ```bash
@@ -660,8 +646,6 @@ Modell, Kontextbalken mit Verlauf, Cache-Trefferquote, Sitzungskosten, Ausgabete
 Subagent-Nutzung, Sitzungsname und Git-Status — über `ui.setStatus()` unter dem
 Eingabefeld gezeichnet. Alle Segmente sind konfigurierbar: Preset wählen oder Schlüssel in
 `statusline.json` (Benutzer- oder Projekt-Scope) umschalten.
-
-**Erfordert Command Code ≥ 1.10.0.**
 
 ### Installation
 
@@ -756,8 +740,6 @@ MIT
 вывода, расход субагентов, имя сессии и состояние git — рисуется под панелью ввода через
 `ui.setStatus()`. Все сегменты настраиваются: выберите пресет или переключайте ключи в
 `statusline.json` (уровень пользователя или проекта).
-
-**Требуется Command Code ≥ 1.10.0.**
 
 ### Установка
 
