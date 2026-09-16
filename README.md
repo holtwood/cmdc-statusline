@@ -6,10 +6,10 @@
 
 ## English
 
-A status line for [Command Code](https://commandcode.ai) (`cmd`, `cmdc` on Windows — either
-works in WSL) — model, gradient context bar, cache hit rate, session cost, output speed,
-sub-agent usage, session name and git state, rendered under the input panel via
-`cmd.ui.setStatus()`.
+A status line for [Command Code](https://commandcode.ai) (`cmdc`) — model, gradient context
+bar, cache hit rate, session cost, output speed, sub-agent usage, session name and git
+state, rendered under the input panel via `ui.setStatus()`. Every segment is configurable:
+pick a preset or toggle keys in `statusline.json`, per user or per project.
 
 ![statusline: deepseek-v4.1-flash │ max │ ██████░░░░░░ 96k (47%) │ cache 99% │ $0.013 │ 42 tok/s │ sub 16k │ Simple Reply │ main ↑1 │ +1 ~2 ?1 │ my-project](docs/statusline.png)
 
@@ -18,20 +18,19 @@ sub-agent usage, session name and git state, rendered under the input panel via
 ### Install
 
 ```bash
-cmd mods add cmdc-statusline -g
-cmd mods list
+cmdc mods add cmdc-statusline -g
+cmdc mods list
 ```
 
 Alternatives:
 
-- **From git:** `cmd mods add holtwood/cmdc-statusline -g`
+- **From git:** `cmdc mods add holtwood/cmdc-statusline -g`
 - **Single file:** copy `index.ts` to `~/.commandcode/mods/statusline.ts`
   (`%USERPROFILE%\.commandcode\mods\statusline.ts` on Windows) — no build step
-- **Try without installing:** `cmd --mod ./index.ts` (mods load once per process — use
+- **Try without installing:** `cmdc --mod ./index.ts` (mods load once per process — use
   `/reload` to pick up changes)
 
-On Windows the binary is `cmdc` (`cmd` is the Windows shell); in WSL both `cmd` and `cmdc`
-work. Pick one install path — the package and the drop-in file are two mods that declare the
+Pick one install path — the package and the drop-in file are two mods that declare the
 same flag names, which Command Code resolves globally.
 
 #### Install with your agent
@@ -39,9 +38,8 @@ same flag names, which Command Code resolves globally.
 Paste this into your agent:
 
 > Install the Command Code mod `cmdc-statusline` at user scope: run
-> `cmd mods add cmdc-statusline -g` (`cmdc` on Windows, `cmd` or `cmdc` in WSL; if npm
-> can't find it, use `holtwood/cmdc-statusline`), confirm `cmd mods list` shows it, then
-> tell me to restart the session.
+> `cmdc mods add cmdc-statusline -g` (if npm can't find it, use `holtwood/cmdc-statusline`),
+> confirm `cmdc mods list` shows it, then tell me to restart the session.
 
 ### Segments
 
@@ -131,27 +129,28 @@ MIT
 
 ## 简体中文
 
-[Command Code](https://commandcode.ai)（`cmd`，Windows 上为 `cmdc`；WSL 中两者皆可用）的状态栏 —— 模型、渐变上下文
+[Command Code](https://commandcode.ai)（`cmdc`）的状态栏 —— 模型、渐变上下文
 进度条、缓存命中率、会话花费、输出速度、子代理用量、会话名与 git 状态，通过
-`cmd.ui.setStatus()` 渲染在输入框下方。
+`ui.setStatus()` 渲染在输入框下方。所有字段均可配置：在 `statusline.json` 中选预设或
+逐键开关，支持用户级与项目级覆盖。
 
 **需要 Command Code ≥ 1.10.0。**
 
 ### 安装
 
 ```bash
-cmd mods add cmdc-statusline -g
-cmd mods list
+cmdc mods add cmdc-statusline -g
+cmdc mods list
 ```
 
 其他装法：
 
-- **走 git：** `cmd mods add holtwood/cmdc-statusline -g`
+- **走 git：** `cmdc mods add holtwood/cmdc-statusline -g`
 - **单文件投放：** 把 `index.ts` 放到 `~/.commandcode/mods/statusline.ts`（Windows 上为
   `%USERPROFILE%\.commandcode\mods\statusline.ts`）——无需构建
-- **免安装试跑：** `cmd --mod ./index.ts`（mod 每进程只加载一次——改完用 `/reload` 生效）
+- **免安装试跑：** `cmdc --mod ./index.ts`（mod 每进程只加载一次——改完用 `/reload` 生效）
 
-Windows 上命令是 `cmdc`（`cmd` 是系统 shell）；WSL 中 `cmd` 与 `cmdc` 都可用。装法挑一种——
+装法挑一种——
 包与投放文件是两个 mod，会声明同名 flag，而 flag 名是跨 mod 全局解析的。
 
 #### 交给 agent 安装
@@ -159,8 +158,8 @@ Windows 上命令是 `cmdc`（`cmd` 是系统 shell）；WSL 中 `cmd` 与 `cmdc
 把下面这段贴给 agent：
 
 > 帮我安装 Command Code 的 mod `cmdc-statusline`（用户级）：执行
-> `cmd mods add cmdc-statusline -g`（Windows 上用 `cmdc`，WSL 中 `cmd`/`cmdc` 均可；若 npm
-> 找不到该包，改用 `holtwood/cmdc-statusline`），确认 `cmd mods list` 能列出，然后提醒我重启会话。
+> `cmdc mods add cmdc-statusline -g`（若 npm 找不到该包，改用 `holtwood/cmdc-statusline`），
+> 确认 `cmdc mods list` 能列出，然后提醒我重启会话。
 
 ### 字段
 
@@ -245,27 +244,28 @@ MIT
 
 ## 繁體中文
 
-[Command Code](https://commandcode.ai)（`cmd`，Windows 上為 `cmdc`；WSL 中兩者皆可用）的狀態列 —— 模型、漸層上下文
+[Command Code](https://commandcode.ai)（`cmdc`）的狀態列 —— 模型、漸層上下文
 進度條、快取命中率、工作階段花費、輸出速度、子代理用量、工作階段名稱與 git 狀態，透過
-`cmd.ui.setStatus()` 渲染在輸入框下方。
+`ui.setStatus()` 渲染在輸入框下方。所有欄位皆可設定：在 `statusline.json` 中選預設組合
+或逐鍵開關，支援使用者級與專案級覆蓋。
 
 **需要 Command Code ≥ 1.10.0。**
 
 ### 安裝
 
 ```bash
-cmd mods add cmdc-statusline -g
-cmd mods list
+cmdc mods add cmdc-statusline -g
+cmdc mods list
 ```
 
 其他裝法：
 
-- **走 git：** `cmd mods add holtwood/cmdc-statusline -g`
+- **走 git：** `cmdc mods add holtwood/cmdc-statusline -g`
 - **單檔投放：** 把 `index.ts` 放到 `~/.commandcode/mods/statusline.ts`（Windows 上為
   `%USERPROFILE%\.commandcode\mods\statusline.ts`）——無需建置
-- **免安裝試跑：** `cmd --mod ./index.ts`（mod 每行程只載入一次——改完用 `/reload` 生效）
+- **免安裝試跑：** `cmdc --mod ./index.ts`（mod 每行程只載入一次——改完用 `/reload` 生效）
 
-Windows 上命令是 `cmdc`（`cmd` 是系統 shell）；WSL 中 `cmd` 與 `cmdc` 都可用。裝法挑一種——
+裝法挑一種——
 套件與投放檔是兩個 mod，會宣告同名 flag，而 flag 名是跨 mod 全域解析的。
 
 #### 交給 agent 安裝
@@ -273,8 +273,8 @@ Windows 上命令是 `cmdc`（`cmd` 是系統 shell）；WSL 中 `cmd` 與 `cmdc
 把下面這段貼給 agent：
 
 > 幫我安裝 Command Code 的 mod `cmdc-statusline`（使用者級）：執行
-> `cmd mods add cmdc-statusline -g`（Windows 上用 `cmdc`，WSL 中 `cmd`/`cmdc` 均可；若 npm
-> 找不到該套件，改用 `holtwood/cmdc-statusline`），確認 `cmd mods list` 能列出，然後提醒我重開工作階段。
+> `cmdc mods add cmdc-statusline -g`（若 npm 找不到該套件，改用 `holtwood/cmdc-statusline`），
+> 確認 `cmdc mods list` 能列出，然後提醒我重開工作階段。
 
 ### 欄位
 
@@ -355,28 +355,30 @@ MIT
 
 ## 日本語
 
-[Command Code](https://commandcode.ai)（`cmd`、Windows では `cmdc`、WSL ではどちらも使える）のステータスライン — モデル、
+[Command Code](https://commandcode.ai)（`cmdc`）のステータスライン — モデル、
 グラデーション付きコンテキストバー、キャッシュヒット率、セッション費用、出力速度、サブエージェント
-使用量、セッション名、git の状態を `cmd.ui.setStatus()` で入力欄の下に表示します。
+使用量、セッション名、git の状態を `ui.setStatus()` で入力欄の下に表示します。
+すべてのセグメントは設定可能です — `statusline.json`（ユーザー/プロジェクトスコープ）で
+プリセットを選ぶか、キーごとに切り替えられます。
 
 **Command Code ≥ 1.10.0 が必要。**
 
 ### インストール
 
 ```bash
-cmd mods add cmdc-statusline -g
-cmd mods list
+cmdc mods add cmdc-statusline -g
+cmdc mods list
 ```
 
 ほかの方法：
 
-- **git から:** `cmd mods add holtwood/cmdc-statusline -g`
+- **git から:** `cmdc mods add holtwood/cmdc-statusline -g`
 - **単一ファイル:** `index.ts` を `~/.commandcode/mods/statusline.ts` に置く
   （Windows では `%USERPROFILE%\.commandcode\mods\statusline.ts`）——ビルド不要
-- **試すだけ:** `cmd --mod ./index.ts`（mod は 1 プロセスにつき 1 回だけ読み込まれます。
+- **試すだけ:** `cmdc --mod ./index.ts`（mod は 1 プロセスにつき 1 回だけ読み込まれます。
   変更後は `/reload` で反映）
 
-Windows ではコマンドは `cmdc` です（`cmd` は Windows のシェル）。WSL では `cmd` と `cmdc` のどちらも使えます。導入方法はどれか 1 つに——
+導入方法はどれか 1 つに——
 パッケージと直接配置は別々の mod で同じ flag 名を宣言し、flag 名は mod をまたいでグローバルに
 解決されます。
 
@@ -385,9 +387,8 @@ Windows ではコマンドは `cmdc` です（`cmd` は Windows のシェル）�
 次を貼ってください:
 
 > Command Code の mod `cmdc-statusline` をユーザースコープでインストールして:
-> `cmd mods add cmdc-statusline -g` を実行（Windows では `cmdc`、WSL では `cmd`/`cmdc` どちらでも可。npm に無ければ
-> `holtwood/cmdc-statusline` を使う）。`cmd mods list` に出ることを確認したら、セッションを
-> 再起動するよう伝えて。
+> `cmdc mods add cmdc-statusline -g` を実行（npm に無ければ `holtwood/cmdc-statusline` を使う）。
+> `cmdc mods list` に出ることを確認したら、セッションを再起動するよう伝えて。
 
 ### セグメント
 
@@ -471,38 +472,38 @@ MIT
 
 ## 한국어
 
-[Command Code](https://commandcode.ai)(`cmd`, Windows에서는 `cmdc`, WSL에서는 둘 다 사용 가능)용 상태 표시줄 — 모델,
+[Command Code](https://commandcode.ai)(`cmdc`)용 상태 표시줄 — 모델,
 그라데이션 컨텍스트 바, 캐시 적중률, 세션 비용, 출력 속도, 서브에이전트 사용량, 세션 이름,
-git 상태를 `cmd.ui.setStatus()`로 입력창 아래에 표시합니다.
+git 상태를 `ui.setStatus()`로 입력창 아래에 표시합니다. 모든 세그먼트는 설정 가능합니다 —
+`statusline.json`(사용자/프로젝트 범위)에서 프리셋을 고르거나 키별로 켜고 끌 수 있습니다.
 
 **Command Code ≥ 1.10.0 필요.**
 
 ### 설치
 
 ```bash
-cmd mods add cmdc-statusline -g
-cmd mods list
+cmdc mods add cmdc-statusline -g
+cmdc mods list
 ```
 
 다른 방법:
 
-- **git에서:** `cmd mods add holtwood/cmdc-statusline -g`
+- **git에서:** `cmdc mods add holtwood/cmdc-statusline -g`
 - **단일 파일:** `index.ts`를 `~/.commandcode/mods/statusline.ts`에 복사
   (Windows에서는 `%USERPROFILE%\.commandcode\mods\statusline.ts`) — 빌드 불필요
-- **설치 없이 시험:** `cmd --mod ./index.ts` (mod는 프로세스당 한 번만 로드됩니다.
+- **설치 없이 시험:** `cmdc --mod ./index.ts` (mod는 프로세스당 한 번만 로드됩니다.
   변경 후에는 `/reload`로 반영)
 
-Windows에서는 바이너리가 `cmdc`입니다(`cmd`는 Windows 셸). WSL에서는 `cmd`와 `cmdc` 둘 다 쓸 수 있습니다. 설치 방법은 하나만 고르세요 —
-패키지와 직접 배치 파일은 같은 flag 이름을 선언하는 두 개의 mod이며, flag 이름은 mod 전역으로
-해석됩니다.
+설치 방법은 하나만 고르세요 — 패키지와 직접 배치 파일은 같은 flag 이름을 선언하는 두 개의
+mod이며, flag 이름은 mod 전역으로 해석됩니다.
 
 #### 에이전트에게 맡기기
 
 다음을 붙여 넣으세요:
 
-> Command Code mod `cmdc-statusline`을 사용자 범위로 설치해 줘: `cmd mods add cmdc-statusline -g`
-> 실행(Windows에서는 `cmdc`, WSL에서는 `cmd`/`cmdc` 모두 가능. npm에 없으면 `holtwood/cmdc-statusline` 사용). `cmd mods list`에
-> 뜨는지 확인한 다음 세션을 재시작하라고 알려 줘.
+> Command Code mod `cmdc-statusline`을 사용자 범위로 설치해 줘: `cmdc mods add cmdc-statusline -g`
+> 실행(npm에 없으면 `holtwood/cmdc-statusline` 사용). `cmdc mods list`에 뜨는지 확인한 다음
+> 세션을 재시작하라고 알려 줘.
 
 ### 세그먼트
 
@@ -585,42 +586,39 @@ MIT
 
 ## Español
 
-Una barra de estado para [Command Code](https://commandcode.ai) (`cmd`, o `cmdc` en Windows;
-en WSL ambos funcionan):
+Una barra de estado para [Command Code](https://commandcode.ai) (`cmdc`):
 modelo, barra de contexto con degradado, tasa de aciertos de caché, coste de la sesión,
 velocidad de salida, uso de subagentes, nombre de sesión y estado de git, dibujada bajo el
-panel de entrada con `cmd.ui.setStatus()`.
+panel de entrada con `ui.setStatus()`. Todos los segmentos son configurables: elige un
+preset o ajusta claves en `statusline.json` (ámbito de usuario o de proyecto).
 
 **Requiere Command Code ≥ 1.10.0.**
 
 ### Instalación
 
 ```bash
-cmd mods add cmdc-statusline -g
-cmd mods list
+cmdc mods add cmdc-statusline -g
+cmdc mods list
 ```
 
 Alternativas:
 
-- **Desde git:** `cmd mods add holtwood/cmdc-statusline -g`
+- **Desde git:** `cmdc mods add holtwood/cmdc-statusline -g`
 - **Un solo archivo:** copia `index.ts` a `~/.commandcode/mods/statusline.ts`
   (`%USERPROFILE%\.commandcode\mods\statusline.ts` en Windows) — sin compilación
-- **Probar sin instalar:** `cmd --mod ./index.ts` (los mods se cargan una vez por proceso —
+- **Probar sin instalar:** `cmdc --mod ./index.ts` (los mods se cargan una vez por proceso —
   usa `/reload` para aplicar cambios)
 
-En Windows el binario es `cmdc` (`cmd` es el shell de Windows); en WSL funcionan tanto
-`cmd` como `cmdc`. Elige una sola vía — el
-paquete y el archivo suelto son dos mods que declaran los mismos flags, y los nombres de
-flag se resuelven globalmente entre mods.
+Elige una sola vía — el paquete y el archivo suelto son dos mods que declaran los mismos
+flags, y los nombres de flag se resuelven globalmente entre mods.
 
 #### Instalarlo con tu agente
 
 Pega esto en tu agente:
 
 > Instala el mod `cmdc-statusline` de Command Code en ámbito de usuario: ejecuta
-> `cmd mods add cmdc-statusline -g` (usa `cmdc` en Windows, `cmd` o `cmdc` en WSL; si npm
-> no lo encuentra, usa `holtwood/cmdc-statusline`), confirma que `cmd mods list` lo
-> muestra y luego dime que reinicie la sesión.
+> `cmdc mods add cmdc-statusline -g` (si npm no lo encuentra, usa `holtwood/cmdc-statusline`),
+> confirma que `cmdc mods list` lo muestra y luego dime que reinicie la sesión.
 
 ### Segmentos
 
@@ -710,41 +708,40 @@ MIT
 
 ## Français
 
-Une ligne de statut pour [Command Code](https://commandcode.ai) (`cmd`, ou `cmdc` sous
-Windows ; les deux fonctionnent sous WSL) : modèle, barre de contexte en dégradé, taux de
-succès du cache, coût de session, vitesse de sortie, usage des sous-agents, nom de session
-et état git, dessinée sous le panneau de saisie via `cmd.ui.setStatus()`.
+Une ligne de statut pour [Command Code](https://commandcode.ai) (`cmdc`) : modèle, barre de
+contexte en dégradé, taux de succès du cache, coût de session, vitesse de sortie, usage des
+sous-agents, nom de session et état git, dessinée sous le panneau de saisie via
+`ui.setStatus()`. Tous les segments sont configurables : choisissez un préréglage ou
+ajustez les clés dans `statusline.json` (portée utilisateur ou projet).
 
 **Nécessite Command Code ≥ 1.10.0.**
 
 ### Installation
 
 ```bash
-cmd mods add cmdc-statusline -g
-cmd mods list
+cmdc mods add cmdc-statusline -g
+cmdc mods list
 ```
 
 Alternatives :
 
-- **Depuis git :** `cmd mods add holtwood/cmdc-statusline -g`
+- **Depuis git :** `cmdc mods add holtwood/cmdc-statusline -g`
 - **Fichier unique :** copiez `index.ts` dans `~/.commandcode/mods/statusline.ts`
   (`%USERPROFILE%\.commandcode\mods\statusline.ts` sous Windows) — sans compilation
-- **Essai sans installation :** `cmd --mod ./index.ts` (un mod se charge une fois par
+- **Essai sans installation :** `cmdc --mod ./index.ts` (un mod se charge une fois par
   processus — `/reload` pour prendre un changement)
 
-Sous Windows le binaire est `cmdc` (`cmd` est le shell Windows) ; sous WSL, `cmd` et
-`cmdc` fonctionnent tous les deux. Choisissez une seule méthode — le paquet et le fichier
-déposé sont deux mods qui déclarent les mêmes noms de flags, résolus globalement entre
-mods.
+Choisissez une seule méthode — le paquet et le fichier déposé sont deux mods qui déclarent
+les mêmes noms de flags, résolus globalement entre mods.
 
 #### Installer via votre agent
 
 Collez ceci dans votre agent :
 
 > Installe le mod `cmdc-statusline` de Command Code en portée utilisateur : exécute
-> `cmd mods add cmdc-statusline -g` (`cmdc` sous Windows, `cmd` ou `cmdc` sous WSL ; si
-> npm ne trouve pas le paquet, utilise `holtwood/cmdc-statusline`), vérifie que
-> `cmd mods list` l'affiche, puis dis-moi de relancer la session.
+> `cmdc mods add cmdc-statusline -g` (si npm ne trouve pas le paquet, utilise
+> `holtwood/cmdc-statusline`), vérifie que `cmdc mods list` l'affiche, puis dis-moi de
+> relancer la session.
 
 ### Segments
 
@@ -832,42 +829,40 @@ MIT
 
 ## Deutsch
 
-Eine Statuszeile für [Command Code](https://commandcode.ai) (`cmd`, unter Windows `cmdc`,
-unter WSL beide):
+Eine Statuszeile für [Command Code](https://commandcode.ai) (`cmdc`):
 Modell, Kontextbalken mit Verlauf, Cache-Trefferquote, Sitzungskosten, Ausgabetempo,
-Subagent-Nutzung, Sitzungsname und Git-Status — über `cmd.ui.setStatus()` unter dem
-Eingabefeld gezeichnet.
+Subagent-Nutzung, Sitzungsname und Git-Status — über `ui.setStatus()` unter dem
+Eingabefeld gezeichnet. Alle Segmente sind konfigurierbar: Preset wählen oder Schlüssel in
+`statusline.json` (Benutzer- oder Projekt-Scope) umschalten.
 
 **Erfordert Command Code ≥ 1.10.0.**
 
 ### Installation
 
 ```bash
-cmd mods add cmdc-statusline -g
-cmd mods list
+cmdc mods add cmdc-statusline -g
+cmdc mods list
 ```
 
 Alternativen:
 
-- **Über git:** `cmd mods add holtwood/cmdc-statusline -g`
+- **Über git:** `cmdc mods add holtwood/cmdc-statusline -g`
 - **Einzelne Datei:** `index.ts` nach `~/.commandcode/mods/statusline.ts` kopieren
   (unter Windows `%USERPROFILE%\.commandcode\mods\statusline.ts`) — ohne Build-Schritt
-- **Ohne Installation testen:** `cmd --mod ./index.ts` (Mods laden einmal pro Prozess —
+- **Ohne Installation testen:** `cmdc --mod ./index.ts` (Mods laden einmal pro Prozess —
   `/reload` übernimmt Änderungen)
 
-Unter Windows heißt das Binary `cmdc` (`cmd` ist die Windows-Shell); unter WSL funktionieren
-`cmd` und `cmdc` gleichermaßen. Nur einen Weg wählen —
-Paket und abgelegte Datei sind zwei Mods, die dieselben Flag-Namen deklarieren, und Flag-Namen
-werden mod-übergreifend global aufgelöst.
+Nur einen Weg wählen — Paket und abgelegte Datei sind zwei Mods, die dieselben Flag-Namen
+deklarieren, und Flag-Namen werden mod-übergreifend global aufgelöst.
 
 #### Vom Agenten installieren lassen
 
 Folgendes in den Agenten einfügen:
 
 > Installiere den Command-Code-Mod `cmdc-statusline` im Benutzer-Scope: führe
-> `cmd mods add cmdc-statusline -g` aus (unter Windows `cmdc`, unter WSL `cmd` oder `cmdc`;
-> falls npm das Paket nicht findet, `holtwood/cmdc-statusline` verwenden), prüfe, dass
-> `cmd mods list` ihn zeigt, und sag mir dann, ich soll die Sitzung neu starten.
+> `cmdc mods add cmdc-statusline -g` aus (falls npm das Paket nicht findet,
+> `holtwood/cmdc-statusline` verwenden), prüfe, dass `cmdc mods list` ihn zeigt, und sag
+> mir dann, ich soll die Sitzung neu starten.
 
 ### Segmente
 
@@ -958,42 +953,40 @@ MIT
 
 ## Русский
 
-Строка состояния для [Command Code](https://commandcode.ai) (`cmd`, в Windows — `cmdc`,
-в WSL работают оба):
+Строка состояния для [Command Code](https://commandcode.ai) (`cmdc`):
 модель, контекстная полоса с градиентом, доля попаданий в кэш, стоимость сессии, скорость
 вывода, расход субагентов, имя сессии и состояние git — рисуется под панелью ввода через
-`cmd.ui.setStatus()`.
+`ui.setStatus()`. Все сегменты настраиваются: выберите пресет или переключайте ключи в
+`statusline.json` (уровень пользователя или проекта).
 
 **Требуется Command Code ≥ 1.10.0.**
 
 ### Установка
 
 ```bash
-cmd mods add cmdc-statusline -g
-cmd mods list
+cmdc mods add cmdc-statusline -g
+cmdc mods list
 ```
 
 Другие способы:
 
-- **Из git:** `cmd mods add holtwood/cmdc-statusline -g`
+- **Из git:** `cmdc mods add holtwood/cmdc-statusline -g`
 - **Один файл:** скопируйте `index.ts` в `~/.commandcode/mods/statusline.ts`
   (в Windows — `%USERPROFILE%\.commandcode\mods\statusline.ts`) — сборка не нужна
-- **Попробовать без установки:** `cmd --mod ./index.ts` (моды загружаются раз на процесс —
+- **Попробовать без установки:** `cmdc --mod ./index.ts` (моды загружаются раз на процесс —
   `/reload` подхватывает изменения)
 
-В Windows бинарник называется `cmdc` (`cmd` — это шелл Windows); в WSL работают и `cmd`,
-и `cmdc`. Выберите один способ —
-пакет и скопированный файл это два мода с одинаковыми именами флагов, а имена флагов
-разрешаются глобально между модами.
+Выберите один способ — пакет и скопированный файл это два мода с одинаковыми именами
+флагов, а имена флагов разрешаются глобально между модами.
 
 #### Установка через агента
 
 Вставьте это в агента:
 
 > Установи мод `cmdc-statusline` для Command Code на пользовательский уровень: выполни
-> `cmd mods add cmdc-statusline -g` (в Windows — `cmdc`, в WSL — `cmd` или `cmdc`; если
-> npm не находит пакет, используй `holtwood/cmdc-statusline`), проверь, что
-> `cmd mods list` его показывает, и скажи мне перезапустить сессию.
+> `cmdc mods add cmdc-statusline -g` (если npm не находит пакет, используй
+> `holtwood/cmdc-statusline`), проверь, что `cmdc mods list` его показывает, и скажи мне
+> перезапустить сессию.
 
 ### Сегменты
 
