@@ -1784,10 +1784,11 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 {
 	const root = fileURLToPath(new URL('..', import.meta.url));
 	const readme = readFileSync(join(root, 'README.md'), 'utf8');
-	checkTrue('README states the host floor', readme.includes(`≥ ${ns.MIN_HOST_VERSION}`));
-	// 九种语言挤在一个 README 里，任何一个漏掉这一段都算漂
-	const stale = readme.split(`≥ ${ns.MIN_HOST_VERSION}`).length - 1;
-	check('every language section states the host floor', stale, 9);
+	// 0.7.x 之前 README 对九种语言逐一写明「需 Command Code ≥ MIN_HOST_VERSION」，
+	// 这里遂钉死它不许漂。后来宿主下限改由运行时版本门控自行保证（index.ts:1060，
+	// 检测到偏旧就停用），README 不再逐一列版本行（f4aed19 已删），故守卫随文档
+	// 一并撤销。MIN_HOST_VERSION 常量仍由上方 check('the researched floor is 1.10.0')
+	// 钉死，版本线不会漂；它只是不再作为九份文档的承诺出现在 README 里。
 
 	// flag 前缀同理：九份语言的配置块都要写带前缀的全名，而且不许留下没前缀的老写法
 	const prefixed = readme.split(`--mod-option ${ns.flagName('<')}`).length - 1;
