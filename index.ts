@@ -47,6 +47,7 @@ import {createInterface} from 'node:readline';
 // 只供 tsc --noEmit 校验；运行时 import type 被整个擦除，不解析、不影响单文件投放。
 import type {ModApi} from './mod-api.js';
 
+// ── 类型 ────────────────────────────────────────────────────────────────────────────
 type Usage = {
 	readonly inputTokens?: number;
 	readonly outputTokens?: number;
@@ -154,14 +155,9 @@ type ComposeOptions = {
 
 type ColorMode = 'truecolor' | 'ansi256' | 'ascii';
 
-type Segment = {
-	readonly key: string;
-	readonly priority: number;
-	readonly variants: readonly string[];
-};
-
 type Config = Record<string, unknown>;
 
+// ── 常量 ────────────────────────────────────────────────────────────────────────────
 const SEP = ' │ ';
 const GIT_TTL_MS = 5000;
 const GIT_TIMEOUT_MS = 10_000;
@@ -172,6 +168,9 @@ const COST_ALERT_USD = 10;
 // 慢仓库的自适应退避：放行间隔 = max(GIT_TTL_MS, GIT_BACKOFF × 上次实测耗时)，
 // 也就是「git 最多占 20% 的墙钟时间」。正常仓库永远被 5 秒地板罩住，行为与从前完全一致。
 const GIT_BACKOFF = 5;
+
+// 窄终端降级的循环上界，见 composeLine：正常永远撞不到，是给逻辑 bug 兜底的
+const DROP_STEPS_MAX = 64;
 
 export function gitGapMs(durationMs: number): number {
 	return Math.max(GIT_TTL_MS, GIT_BACKOFF * Math.max(0, durationMs));
@@ -211,162 +210,8 @@ const ANSI = {
 	gray: '\u001b[90m',
 };
 
-// >>> GENERATED:WINDOWS（由 commandcode/gen-model-tables.py 生成，勿手改）
-// 上下文窗口表：清单未公布窗口的模型（zai-org/GLM-5.1、MiniMaxAI/MiniMax-M2.7、Qwen/Qwen3.6-Max-Preview、Qwen/Qwen3.6-Plus）不在表内，
-// 未命中时只显示 token 数、不显示百分比与进度条（BYOK/自定义端点模型同理）。
-const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
-	'MiniMaxAI/MiniMax-M2.5': 200000,
-	'MiniMaxAI/MiniMax-M3': 1000000,
-	'Qwen/Qwen3.7-Flash': 1000000,
-	'Qwen/Qwen3.7-Max': 1000000,
-	'Qwen/Qwen3.7-Plus': 1000000,
-	'Qwen/Qwen3.8-27B': 262000,
-	'Qwen/Qwen3.8-Flash': 1000000,
-	'Qwen/Qwen3.8-Max': 1000000,
-	'Qwen/Qwen3.8-Max-0902': 1000000,
-	'claude-fable-5': 1000000,
-	'claude-fable-5-1': 1000000,
-	'claude-haiku-4-5-20251001': 200000,
-	'claude-opus-4-7': 1000000,
-	'claude-opus-4-8': 1000000,
-	'claude-opus-5': 1000000,
-	'claude-sonnet-4-6': 1000000,
-	'claude-sonnet-5': 1000000,
-	'deepseek/deepseek-v4-flash': 1000000,
-	'deepseek/deepseek-v4-flash-fast': 1000000,
-	'deepseek/deepseek-v4-flash-vision-exp': 1000000,
-	'deepseek/deepseek-v4-pro': 1000000,
-	'deepseek/deepseek-v4.1-flash': 1000000,
-	'google/gemini-3.1-flash-lite': 1000000,
-	'google/gemini-3.5-flash': 1000000,
-	'google/gemini-3.5-flash-lite': 1000000,
-	'google/gemini-3.6-flash': 1000000,
-	'google/gemini-3.7-flash': 1050000,
-	'google/gemini-3.8-flash': 1000000,
-	'gpt-5.3-codex': 400000,
-	'gpt-5.4': 400000,
-	'gpt-5.4-mini': 400000,
-	'gpt-5.5': 400000,
-	'gpt-5.6-luna': 1050000,
-	'gpt-5.6-sol': 1050000,
-	'gpt-5.6-terra': 1050000,
-	'gpt-6-astra': 1050000,
-	'inclusionai/ling-3.0-flash-sante:free': 262000,
-	'meituan/LongCat-2.0:free': 1050000,
-	'meta/muse-spark-1.1': 1050000,
-	'meta/muse-spark-1.2': 1050000,
-	'meta/muse-spark-1.2-contributor': 1050000,
-	'meta/muse-spark-1.3': 1050000,
-	'meta/muse-spark-1.3-contributor': 1050000,
-	'moonshotai/Kimi-K2.5': 256000,
-	'moonshotai/Kimi-K2.6': 256000,
-	'moonshotai/Kimi-K2.7-Code': 256000,
-	'moonshotai/Kimi-K2.7-Code-Highspeed': 262000,
-	'moonshotai/Kimi-K3': 1000000,
-	'nvidia/nemotron-3-ultra-550b-a55b': 1000000,
-	'poolside/laguna-s-2.1-free': 256000,
-	'sakana/fugu-ultra': 1000000,
-	'stepfun/Step-3.5-Flash': 1000000,
-	'stepfun/Step-3.7-Flash': 256000,
-	'tencent/hy3-paid': 262000,
-	'tencent/hy4-preview': 1050000,
-	'thinkingmachines/inkling': 256000,
-	'thinkingmachines/inkling-small': 1000000,
-	'xai/grok-4.5': 500000,
-	'xai/grok-4.6': 500000,
-	'xiaomi/mimo-v2.5': 1000000,
-	'xiaomi/mimo-v2.5-pro': 1000000,
-	'z-ai/glm-5.3-flash': 1050000,
-	'zai-org/GLM-5': 200000,
-	'zai-org/GLM-5.2': 1000000,
-	'zai-org/GLM-5.2-Fast': 1000000,
-	'zai-org/GLM-5.3': 1000000,
-};
-// <<< GENERATED:WINDOWS
-
-// >>> GENERATED:PRICES（由 commandcode/gen-model-tables.py 生成，勿手改）
-// 单价表（美元 / 1M token，含缓存读写价）：花费按 usage 自行累计，公式已对产品记录的 costUsd 逐条核对
-type ModelPrice = {
-	readonly in: number;
-	readonly out: number;
-	readonly cacheRead: number;
-	readonly cacheWrite: number;
-};
-
-const MODEL_PRICES: Record<string, ModelPrice> = {
-	'MiniMaxAI/MiniMax-M2.5': {in: 0.3, out: 1.2, cacheRead: 0.03, cacheWrite: 0},
-	'MiniMaxAI/MiniMax-M2.7': {in: 0.3, out: 1.2, cacheRead: 0.06, cacheWrite: 0},
-	'MiniMaxAI/MiniMax-M3': {in: 0.3, out: 1.2, cacheRead: 0.06, cacheWrite: 0},
-	'Qwen/Qwen3.6-Max-Preview': {in: 1.3, out: 7.8, cacheRead: 0.26, cacheWrite: 1.63},
-	'Qwen/Qwen3.6-Plus': {in: 0.5, out: 3, cacheRead: 0.1, cacheWrite: 0},
-	'Qwen/Qwen3.7-Flash': {in: 0.03, out: 0.13, cacheRead: 0.006, cacheWrite: 0.038},
-	'Qwen/Qwen3.7-Max': {in: 2.5, out: 7.5, cacheRead: 0.5, cacheWrite: 3.13},
-	'Qwen/Qwen3.7-Plus': {in: 0.4, out: 1.6, cacheRead: 0.08, cacheWrite: 0.5},
-	'Qwen/Qwen3.8-27B': {in: 0.4, out: 3, cacheRead: 0.04, cacheWrite: 0},
-	'Qwen/Qwen3.8-Flash': {in: 0.16, out: 0.47, cacheRead: 0.016, cacheWrite: 0},
-	'Qwen/Qwen3.8-Max': {in: 2, out: 6, cacheRead: 0.25, cacheWrite: 2.5},
-	'Qwen/Qwen3.8-Max-0902': {in: 2, out: 6, cacheRead: 0.25, cacheWrite: 0},
-	'claude-fable-5': {in: 10, out: 50, cacheRead: 1, cacheWrite: 12.5},
-	'claude-fable-5-1': {in: 10, out: 50, cacheRead: 0.25, cacheWrite: 12.5},
-	'claude-haiku-4-5-20251001': {in: 1, out: 5, cacheRead: 0.1, cacheWrite: 1.25},
-	'claude-opus-4-7': {in: 5, out: 25, cacheRead: 0.5, cacheWrite: 6.25},
-	'claude-opus-4-8': {in: 5, out: 25, cacheRead: 0.5, cacheWrite: 6.25},
-	'claude-opus-5': {in: 5, out: 25, cacheRead: 0.5, cacheWrite: 6.25},
-	'claude-sonnet-4-6': {in: 3, out: 15, cacheRead: 0.3, cacheWrite: 3.75},
-	'claude-sonnet-5': {in: 2, out: 10, cacheRead: 0.2, cacheWrite: 2.5},
-	'deepseek/deepseek-v4-flash': {in: 0.15, out: 0.6, cacheRead: 0.003, cacheWrite: 0},
-	'deepseek/deepseek-v4-flash-fast': {in: 0.28, out: 0.56, cacheRead: 0.07, cacheWrite: 0},
-	'deepseek/deepseek-v4-flash-vision-exp': {in: 0.15, out: 0.6, cacheRead: 0.003, cacheWrite: 0},
-	'deepseek/deepseek-v4-pro': {in: 0.66, out: 1.98, cacheRead: 0.022, cacheWrite: 0},
-	'deepseek/deepseek-v4.1-flash': {in: 0.15, out: 0.6, cacheRead: 0.003, cacheWrite: 0},
-	'google/gemini-3.1-flash-lite': {in: 0.25, out: 1.5, cacheRead: 0.03, cacheWrite: 0},
-	'google/gemini-3.5-flash': {in: 1.5, out: 9, cacheRead: 0.15, cacheWrite: 0},
-	'google/gemini-3.5-flash-lite': {in: 0.3, out: 2.5, cacheRead: 0.03, cacheWrite: 0},
-	'google/gemini-3.6-flash': {in: 1.5, out: 7.5, cacheRead: 0.15, cacheWrite: 0},
-	'google/gemini-3.7-flash': {in: 1.5, out: 7.5, cacheRead: 0.15, cacheWrite: 0.08334},
-	'google/gemini-3.8-flash': {in: 1.5, out: 7.5, cacheRead: 0.15, cacheWrite: 0},
-	'gpt-5.3-codex': {in: 2, out: 8, cacheRead: 0.5, cacheWrite: 0},
-	'gpt-5.4': {in: 2.5, out: 15, cacheRead: 0.25, cacheWrite: 0},
-	'gpt-5.4-mini': {in: 0.75, out: 4.5, cacheRead: 0.075, cacheWrite: 0},
-	'gpt-5.5': {in: 5, out: 30, cacheRead: 0.5, cacheWrite: 0},
-	'gpt-5.6-luna': {in: 0.2, out: 1.2, cacheRead: 0.02, cacheWrite: 0.25},
-	'gpt-5.6-sol': {in: 5, out: 30, cacheRead: 0.5, cacheWrite: 6.25},
-	'gpt-5.6-terra': {in: 2, out: 12, cacheRead: 0.2, cacheWrite: 2.5},
-	'gpt-6-astra': {in: 10, out: 50, cacheRead: 1, cacheWrite: 12.5},
-	'inclusionai/ling-3.0-flash-sante:free': {in: 0, out: 0, cacheRead: 0, cacheWrite: 0},
-	'meituan/LongCat-2.0:free': {in: 0, out: 0, cacheRead: 0, cacheWrite: 0},
-	'meta/muse-spark-1.1': {in: 1.25, out: 4.25, cacheRead: 0.15, cacheWrite: 0},
-	'meta/muse-spark-1.2': {in: 1.25, out: 4.25, cacheRead: 0.15, cacheWrite: 0},
-	'meta/muse-spark-1.2-contributor': {in: 0.1, out: 0.2, cacheRead: 0.002, cacheWrite: 0},
-	'meta/muse-spark-1.3': {in: 1.25, out: 4.25, cacheRead: 0.15, cacheWrite: 0},
-	'meta/muse-spark-1.3-contributor': {in: 0.1, out: 0.2, cacheRead: 0.002, cacheWrite: 0},
-	'moonshotai/Kimi-K2.5': {in: 0.6, out: 3, cacheRead: 0.1, cacheWrite: 0},
-	'moonshotai/Kimi-K2.6': {in: 0.95, out: 4, cacheRead: 0.16, cacheWrite: 0},
-	'moonshotai/Kimi-K2.7-Code': {in: 0.95, out: 4, cacheRead: 0.19, cacheWrite: 0},
-	'moonshotai/Kimi-K2.7-Code-Highspeed': {in: 1.9, out: 8, cacheRead: 0.38, cacheWrite: 0},
-	'moonshotai/Kimi-K3': {in: 3, out: 15, cacheRead: 0.3, cacheWrite: 0},
-	'nvidia/nemotron-3-ultra-550b-a55b': {in: 0.6, out: 2.4, cacheRead: 0.12, cacheWrite: 0},
-	'poolside/laguna-s-2.1-free': {in: 0, out: 0, cacheRead: 0, cacheWrite: 0},
-	'sakana/fugu-ultra': {in: 5, out: 30, cacheRead: 0.5, cacheWrite: 0},
-	'stepfun/Step-3.5-Flash': {in: 0.1, out: 0.3, cacheRead: 0.02, cacheWrite: 0},
-	'stepfun/Step-3.7-Flash': {in: 0.2, out: 1.15, cacheRead: 0.04, cacheWrite: 0},
-	'tencent/hy3-paid': {in: 0.14, out: 0.58, cacheRead: 0.035, cacheWrite: 0},
-	'tencent/hy4-preview': {in: 0.834, out: 2.501, cacheRead: 0.042, cacheWrite: 0},
-	'thinkingmachines/inkling': {in: 1, out: 4.05, cacheRead: 0.17, cacheWrite: 0},
-	'thinkingmachines/inkling-small': {in: 0.5, out: 1.2, cacheRead: 0.1, cacheWrite: 0},
-	'xai/grok-4.5': {in: 2, out: 6, cacheRead: 0.5, cacheWrite: 0},
-	'xai/grok-4.6': {in: 2, out: 6, cacheRead: 0.5, cacheWrite: 0},
-	'xiaomi/mimo-v2.5': {in: 0.14, out: 0.28, cacheRead: 0.0028, cacheWrite: 0},
-	'xiaomi/mimo-v2.5-pro': {in: 0.435, out: 0.87, cacheRead: 0.0036, cacheWrite: 0},
-	'z-ai/glm-5.3-flash': {in: 0.15, out: 0.5, cacheRead: 0.03, cacheWrite: 0},
-	'zai-org/GLM-5': {in: 1, out: 3.2, cacheRead: 0.2, cacheWrite: 0},
-	'zai-org/GLM-5.1': {in: 1.4, out: 4.4, cacheRead: 0.26, cacheWrite: 0},
-	'zai-org/GLM-5.2': {in: 1.4, out: 4.4, cacheRead: 0.26, cacheWrite: 0},
-	'zai-org/GLM-5.2-Fast': {in: 3, out: 10.25, cacheRead: 0.5, cacheWrite: 0},
-	'zai-org/GLM-5.3': {in: 1.4, out: 4.4, cacheRead: 0.26, cacheWrite: 0},
-};
-// <<< GENERATED:PRICES
-
+// ── 纯函数：格式化、宽度、颜色、git 解析、组装 ──────────────────────────────────────
+// 这两张表在文件末尾的生成区（机器写入）—— 用表只经这两个口子，别处不要直接索引
 export function contextWindowFor(model?: string): number | undefined {
 	return model ? MODEL_CONTEXT_WINDOWS[model] : undefined;
 }
@@ -647,8 +492,10 @@ export function composeLine(
 
 	const maxWidth = options.maxWidth ?? 0;
 	if (maxWidth > 0) {
+		// 每轮要么把某个条目的变体降一级、要么把它整个丢掉，所以轮数本就有上界；
+		// DROP_STEPS_MAX 是给「算宽度 / 丢条目」这套逻辑本身出 bug 时兜底的（别转死循环）。
 		let guard = 0;
-		while (visibleLength(joined()) > maxWidth && guard < 64) {
+		while (visibleLength(joined()) > maxWidth && guard < DROP_STEPS_MAX) {
 			guard += 1;
 			const droppable = entries
 				.filter(entry => entry.priority > 0)
@@ -667,14 +514,7 @@ export function composeLine(
 	return joined();
 }
 
-export function userConfigPath(): string {
-	return join(homedir(), '.commandcode', 'statusline.json');
-}
-
-export function projectConfigPath(cwd: string): string {
-	return join(cwd, '.commandcode', 'statusline.json');
-}
-
+// ── flag 注册表（键名的唯一事实来源） ───────────────────────────────────────────────
 type FlagSpec = {
 	readonly name: string;
 	readonly type: 'boolean' | 'string';
@@ -718,6 +558,7 @@ export function flagName(key: string): string {
 	return `statusline.${key}`;
 }
 
+// ── 预设与取值的校验 / 归一化 ───────────────────────────────────────────────────────
 // 预设只决定段位开关，没列出的键按「关」算（否则 minimal 不 minimal）
 const PRESETS: Record<string, Record<string, boolean>> = {
 	full: {
@@ -740,16 +581,12 @@ const PRESETS: Record<string, Record<string, boolean>> = {
 
 const PRESET_NAMES = ['full', 'minimal', 'usage'];
 
-function hasOwn(object: object, key: string): boolean {
-	return Object.prototype.hasOwnProperty.call(object, key);
-}
-
-export function isPresetName(value: unknown): boolean {
-	return typeof value === 'string' && hasOwn(PRESETS, value);
+function isPresetName(value: unknown): boolean {
+	return typeof value === 'string' && Object.prototype.hasOwnProperty.call(PRESETS, value);
 }
 
 // 预设对某个键的取值；不是段位键（ascii/raw-model/refresh…）或预设名不认识时返回 undefined
-export function presetValue(preset: string, key: string): boolean | undefined {
+function presetValue(preset: string, key: string): boolean | undefined {
 	if (!FLAG_BY_NAME.get(key)?.segment || !isPresetName(preset)) return undefined;
 	return PRESETS[preset][key] ?? false;
 }
@@ -757,7 +594,7 @@ export function presetValue(preset: string, key: string): boolean | undefined {
 // 配置文件里这个取值能不能用：布尔键必须是布尔；数字键允许 number 或数字字符串，但得解析得出非负数；
 // 其余字符串键（目前只有 preset）只收字符串 —— 否则 {"preset": 123} 会被判为「可用」，
 // 诊断表照抄 123 报成生效值，而 presetName() 只认字符串、实际走的是 full：又是表在撒谎。
-export function acceptsValue(spec: FlagSpec, value: unknown): boolean {
+function acceptsValue(spec: FlagSpec, value: unknown): boolean {
 	if (spec.type === 'boolean') return typeof value === 'boolean';
 	if (spec.numeric) {
 		if (typeof value !== 'string' && typeof value !== 'number') return false;
@@ -767,10 +604,10 @@ export function acceptsValue(spec: FlagSpec, value: unknown): boolean {
 	return typeof value === 'string';
 }
 
-export type Lang = 'zh' | 'en';
+type Lang = 'zh' | 'en';
 
 // lang 键的归一化：zh / zh-CN / en / en-US 都认；其余返回 undefined（诊断会点名 + 回落 zh）
-export function langOf(value: unknown): Lang | undefined {
+function langOf(value: unknown): Lang | undefined {
 	if (typeof value !== 'string') return undefined;
 	const head = value.trim().toLowerCase();
 	if (head === 'zh' || head.startsWith('zh-') || head.startsWith('zh_')) return 'zh';
@@ -778,14 +615,14 @@ export function langOf(value: unknown): Lang | undefined {
 	return undefined;
 }
 
-export function describeExpectation(spec: FlagSpec, lang: Lang = 'zh'): string {
+function describeExpectation(spec: FlagSpec, lang: Lang = 'zh'): string {
 	if (spec.numeric) return lang === 'en' ? 'non-negative number' : '非负数字';
 	return spec.type === 'boolean' ? 'true / false' : lang === 'en' ? 'string' : '字符串';
 }
 
 // 数值键的规范化：解析得出非负数就取整数并按 max 截断，否则回落默认。
 // flagNumber() 与诊断表都走这里 —— 否则配置写 bar-width: 100 时，表里报 100、底栏用的是 40。
-export function clampedNumber(spec: FlagSpec, value: unknown): number {
+function clampedNumber(spec: FlagSpec, value: unknown): number {
 	const parsed = Number(value);
 	if (!Number.isFinite(parsed) || parsed < 0) return Number(spec.default);
 	return Math.min(spec.max ?? Number.MAX_SAFE_INTEGER, Math.floor(parsed));
@@ -793,7 +630,7 @@ export function clampedNumber(spec: FlagSpec, value: unknown): number {
 
 // preset / lang 名大小写不敏感（presetName() 与 langOf() 也是这么归一化的）：这里不改，
 // 诊断表就会把 "Minimal" / "EN" 原样报出来 —— 与实际生效的值对不上
-export function canonical(spec: FlagSpec, value: unknown): unknown {
+function canonical(spec: FlagSpec, value: unknown): unknown {
 	if (typeof value !== 'string') return value;
 	if (spec.name === 'preset') return value.toLowerCase();
 	// en-US → en；不认识的值原样保留，诊断表照实报出、实际按 zh 走
@@ -801,7 +638,16 @@ export function canonical(spec: FlagSpec, value: unknown): unknown {
 	return value;
 }
 
-export type ConfigLoad = {
+// ── 配置文件（路径、读取、写入） ────────────────────────────────────────────────────
+function userConfigPath(): string {
+	return join(homedir(), '.commandcode', 'statusline.json');
+}
+
+function projectConfigPath(cwd: string): string {
+	return join(cwd, '.commandcode', 'statusline.json');
+}
+
+type ConfigLoad = {
 	readonly config: Config;
 	readonly sources: readonly string[];
 	/** 每个键最后是被哪份文件设上的（诊断表要按这个报来源） */
@@ -877,6 +723,7 @@ export function writeConfigKey(path: string, key: string, value: unknown): void 
 	}
 }
 
+// ── 宿主版本闸门 ────────────────────────────────────────────────────────────────────
 // 下限是查出来的，不是拍脑袋定的：抓 npm 上相邻两版的 dist/cli.mjs 直接比对
 // （1.9.0 / 1.10.0），再在 1.20 / 1.30 / 1.40 / 1.50 / 1.54 上复验。
 // 最晚出现的依赖是 cmd.ui.capabilities —— mod 靠它判断这个宿主到底渲不渲染底栏。
@@ -921,6 +768,7 @@ export function versionAtLeast(actual: string, minimum: string): boolean {
 	return true;
 }
 
+// ── 会话数据（transcript / meta / 用户配置） ────────────────────────────────────────
 function sessionPath(sessionId: string, cwd: string, suffix: string): string {
 	const slug = cwd.replace(/^[/\\]+/, '').replace(/[/\\:]+/g, '-');
 	return join(homedir(), '.commandcode', 'projects', slug, `${sessionId}${suffix}`);
@@ -1034,7 +882,7 @@ export function readUserConfig(): {model?: string; reasoningEffort: Record<strin
 	}
 }
 
-// ── 界面文案（lang 键：zh 默认 / en）────────────────────────────────────────────────
+// ── 界面文案（lang 键：zh 默认 / en） ───────────────────────────────────────────────
 // flag 描述与版本闸门提示在注册期出文案，那会儿还没有 getFlag —— 只看配置文件里的 lang；
 // 其余全部按生效 lang 实时切（写完 lang=en，下一条报告就是英文）。两个入口的取舍不同：
 // 报告/弹窗每次取 currentLang()，注册期描述只读配置文件 —— CLI --mod-option lang=en 管不到
@@ -1195,6 +1043,7 @@ const L10N = {
 // 两份文案形状必须完全一致；字符串字段宽化成 string，让 zh/en 可互赋
 type Strings = {readonly [K in keyof (typeof L10N)['zh']]: (typeof L10N)['zh'][K] extends string ? string : (typeof L10N)['zh'][K]};
 
+// ── mod 工厂 ────────────────────────────────────────────────────────────────────────
 export default function (cmd: ModApi): void {
 	// 配置文件先读（纯文件 IO，不依赖任何已注册的 flag）：版本提示与 flag 描述的语言
 	// 都只看文件里的 lang —— 这两个文案在注册期就要出，那会儿 getFlag 还不可用。
@@ -1461,6 +1310,14 @@ export default function (cmd: ModApi): void {
 		refresh();
 	};
 
+	// 开局能恢复的三件事：配置里的模型/effort、会话名、以及 transcript 里的历史累计。
+	// 两个入口（onSessionStart 与 run_start）都要跑同一套 —— 谁先到都可能，重复跑是幂等的。
+	const seedFromKnownSources = (): void => {
+		seedFromConfig();
+		seedTitle();
+		void seedSession();
+	};
+
 	// 一次读的耗时超过配置的刷新间隔时提醒一次：这正是「用户不知道自己的仓库慢」那种不可见故障
 	const noteSlowGit = (): void => {
 		if (gitSlowNotified) return;
@@ -1537,19 +1394,24 @@ export default function (cmd: ModApi): void {
 			cwd: cwdName(),
 		});
 
+	// 本运行到底渲不渲染底栏。两件事在这里合成一个判断：
+	//   status === false  → 宿主明说了不画（headless）
+	//   capabilities 缺席 → 1.9.0 那种旧宿主，版本闸门又是尽力而为的（版本读不出来时不猜、放行），
+	//                       于是走到这里。直接取 .status 会让每次事件都变成一个 mod_error，
+	//                       兜底成「什么都不画」比在用户会话里持续报错体面。
+	// 报告里要区分这两种情况，所以那边不看这个函数，直接读三态。
+	const rendersFooter = (): boolean => cmd.ui.capabilities?.status === true;
+
 	// 重绘是同步且幂等的（宿主自己会去重相同文本），所以它永远不等 git：
 	// 从前 refresh() 先 await git 再画，一个 8 秒的 git status 会把模型/花费/上下文一起卡 8 秒。
-	// capabilities 用可选链：版本闸门是尽力而为的（宿主版本读不出来时不猜、放行），而 1.9.0
-	// 的 ModUi 上根本没有这个属性，直接取 .status 会让每次事件都变成一个 mod_error。
-	// 兜底成「什么都不画」，比在用户会话里持续报错体面。
 	const paint = (): void => {
-		if (!cmd.ui.capabilities?.status) return;
+		if (!rendersFooter()) return;
 		cmd.ui.setStatus(composer() || null);
 	};
 
 	const refresh = (): void => {
 		// 本运行不渲染底栏（headless）就什么都别做：连 git 进程都不该起
-		if (!cmd.ui.capabilities?.status) return;
+		if (!rendersFooter()) return;
 		paint();
 		// 该不该真去读 git 由 readGit 的自适应闸门决定；这里只管把请求发出去
 		if (flag('git')) void readGit();
@@ -1585,9 +1447,7 @@ export default function (cmd: ModApi): void {
 				session = freshSession(id);
 				requestStartedAt = 0;
 			}
-			seedFromConfig();
-			seedTitle();
-			void seedSession();
+			seedFromKnownSources();
 			startTimer();
 			// 幂等：会话被替换时若 start 再次触发，避免监听器叠加
 			process.stdout.off('resize', onResize);
@@ -1609,9 +1469,7 @@ export default function (cmd: ModApi): void {
 		// 只在还没拿到 id 时收养：run 的 sessionId 理应属于当前会话，
 		// 换个 id 就重置的话，一次意外的嵌套 run 会把整份会话状态抹掉
 		if (session.id === undefined && typeof data.sessionId === 'string') session.id = data.sessionId;
-		seedFromConfig();
-		seedTitle();
-		void seedSession();
+		seedFromKnownSources();
 		refresh();
 	});
 
@@ -1944,3 +1802,163 @@ export default function (cmd: ModApi): void {
 		},
 	});
 }
+
+// ── 生成区（机器写入，勿手改） ──────────────────────────────────────────────────────
+// scripts/gen-model-tables.py 从 CLI 自带的模型清单生成这两张表，CI 用 --check 比对漂移。
+// 放在文件末尾是为了让上面连成一片手写代码 —— 它们是附录，不在阅读路径上；
+// 上面用表的地方都走 contextWindowFor / modelPriceFor 两个口子，表本身不必挨着调用点。
+// >>> GENERATED:WINDOWS（由 scripts/gen-model-tables.py 生成，勿手改）
+// 上下文窗口表：清单未公布窗口的模型（zai-org/GLM-5.1、MiniMaxAI/MiniMax-M2.7、Qwen/Qwen3.6-Max-Preview、Qwen/Qwen3.6-Plus）不在表内，
+// 未命中时只显示 token 数、不显示百分比与进度条（BYOK/自定义端点模型同理）。
+const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+	'MiniMaxAI/MiniMax-M2.5': 200000,
+	'MiniMaxAI/MiniMax-M3': 1000000,
+	'Qwen/Qwen3.7-Flash': 1000000,
+	'Qwen/Qwen3.7-Max': 1000000,
+	'Qwen/Qwen3.7-Plus': 1000000,
+	'Qwen/Qwen3.8-27B': 262000,
+	'Qwen/Qwen3.8-Flash': 1000000,
+	'Qwen/Qwen3.8-Max': 1000000,
+	'Qwen/Qwen3.8-Max-0902': 1000000,
+	'claude-fable-5': 1000000,
+	'claude-fable-5-1': 1000000,
+	'claude-haiku-4-5-20251001': 200000,
+	'claude-opus-4-7': 1000000,
+	'claude-opus-4-8': 1000000,
+	'claude-opus-5': 1000000,
+	'claude-sonnet-4-6': 1000000,
+	'claude-sonnet-5': 1000000,
+	'deepseek/deepseek-v4-flash': 1000000,
+	'deepseek/deepseek-v4-flash-fast': 1000000,
+	'deepseek/deepseek-v4-flash-vision-exp': 1000000,
+	'deepseek/deepseek-v4-pro': 1000000,
+	'deepseek/deepseek-v4.1-flash': 1000000,
+	'google/gemini-3.1-flash-lite': 1000000,
+	'google/gemini-3.5-flash': 1000000,
+	'google/gemini-3.5-flash-lite': 1000000,
+	'google/gemini-3.6-flash': 1000000,
+	'google/gemini-3.7-flash': 1050000,
+	'google/gemini-3.8-flash': 1000000,
+	'gpt-5.3-codex': 400000,
+	'gpt-5.4': 400000,
+	'gpt-5.4-mini': 400000,
+	'gpt-5.5': 400000,
+	'gpt-5.6-luna': 1050000,
+	'gpt-5.6-sol': 1050000,
+	'gpt-5.6-terra': 1050000,
+	'gpt-6-astra': 1050000,
+	'inclusionai/ling-3.0-flash-sante:free': 262000,
+	'meituan/LongCat-2.0:free': 1050000,
+	'meta/muse-spark-1.1': 1050000,
+	'meta/muse-spark-1.2': 1050000,
+	'meta/muse-spark-1.2-contributor': 1050000,
+	'meta/muse-spark-1.3': 1050000,
+	'meta/muse-spark-1.3-contributor': 1050000,
+	'moonshotai/Kimi-K2.5': 256000,
+	'moonshotai/Kimi-K2.6': 256000,
+	'moonshotai/Kimi-K2.7-Code': 256000,
+	'moonshotai/Kimi-K2.7-Code-Highspeed': 262000,
+	'moonshotai/Kimi-K3': 1000000,
+	'nvidia/nemotron-3-ultra-550b-a55b': 1000000,
+	'poolside/laguna-s-2.1-free': 256000,
+	'sakana/fugu-ultra': 1000000,
+	'stepfun/Step-3.5-Flash': 1000000,
+	'stepfun/Step-3.7-Flash': 256000,
+	'tencent/hy3-paid': 262000,
+	'tencent/hy4-preview': 1050000,
+	'thinkingmachines/inkling': 256000,
+	'thinkingmachines/inkling-small': 1000000,
+	'xai/grok-4.5': 500000,
+	'xai/grok-4.6': 500000,
+	'xiaomi/mimo-v2.5': 1000000,
+	'xiaomi/mimo-v2.5-pro': 1000000,
+	'z-ai/glm-5.3-flash': 1050000,
+	'zai-org/GLM-5': 200000,
+	'zai-org/GLM-5.2': 1000000,
+	'zai-org/GLM-5.2-Fast': 1000000,
+	'zai-org/GLM-5.3': 1000000,
+};
+// <<< GENERATED:WINDOWS
+
+// >>> GENERATED:PRICES（由 scripts/gen-model-tables.py 生成，勿手改）
+// 单价表（美元 / 1M token，含缓存读写价）：花费按 usage 自行累计，公式已对产品记录的 costUsd 逐条核对
+type ModelPrice = {
+	readonly in: number;
+	readonly out: number;
+	readonly cacheRead: number;
+	readonly cacheWrite: number;
+};
+
+const MODEL_PRICES: Record<string, ModelPrice> = {
+	'MiniMaxAI/MiniMax-M2.5': {in: 0.3, out: 1.2, cacheRead: 0.03, cacheWrite: 0},
+	'MiniMaxAI/MiniMax-M2.7': {in: 0.3, out: 1.2, cacheRead: 0.06, cacheWrite: 0},
+	'MiniMaxAI/MiniMax-M3': {in: 0.3, out: 1.2, cacheRead: 0.06, cacheWrite: 0},
+	'Qwen/Qwen3.6-Max-Preview': {in: 1.3, out: 7.8, cacheRead: 0.26, cacheWrite: 1.63},
+	'Qwen/Qwen3.6-Plus': {in: 0.5, out: 3, cacheRead: 0.1, cacheWrite: 0},
+	'Qwen/Qwen3.7-Flash': {in: 0.03, out: 0.13, cacheRead: 0.006, cacheWrite: 0.038},
+	'Qwen/Qwen3.7-Max': {in: 2.5, out: 7.5, cacheRead: 0.5, cacheWrite: 3.13},
+	'Qwen/Qwen3.7-Plus': {in: 0.4, out: 1.6, cacheRead: 0.08, cacheWrite: 0.5},
+	'Qwen/Qwen3.8-27B': {in: 0.4, out: 3, cacheRead: 0.04, cacheWrite: 0},
+	'Qwen/Qwen3.8-Flash': {in: 0.16, out: 0.47, cacheRead: 0.016, cacheWrite: 0},
+	'Qwen/Qwen3.8-Max': {in: 2, out: 6, cacheRead: 0.25, cacheWrite: 2.5},
+	'Qwen/Qwen3.8-Max-0902': {in: 2, out: 6, cacheRead: 0.25, cacheWrite: 0},
+	'claude-fable-5': {in: 10, out: 50, cacheRead: 1, cacheWrite: 12.5},
+	'claude-fable-5-1': {in: 10, out: 50, cacheRead: 0.25, cacheWrite: 12.5},
+	'claude-haiku-4-5-20251001': {in: 1, out: 5, cacheRead: 0.1, cacheWrite: 1.25},
+	'claude-opus-4-7': {in: 5, out: 25, cacheRead: 0.5, cacheWrite: 6.25},
+	'claude-opus-4-8': {in: 5, out: 25, cacheRead: 0.5, cacheWrite: 6.25},
+	'claude-opus-5': {in: 5, out: 25, cacheRead: 0.5, cacheWrite: 6.25},
+	'claude-sonnet-4-6': {in: 3, out: 15, cacheRead: 0.3, cacheWrite: 3.75},
+	'claude-sonnet-5': {in: 2, out: 10, cacheRead: 0.2, cacheWrite: 2.5},
+	'deepseek/deepseek-v4-flash': {in: 0.15, out: 0.6, cacheRead: 0.003, cacheWrite: 0},
+	'deepseek/deepseek-v4-flash-fast': {in: 0.28, out: 0.56, cacheRead: 0.07, cacheWrite: 0},
+	'deepseek/deepseek-v4-flash-vision-exp': {in: 0.15, out: 0.6, cacheRead: 0.003, cacheWrite: 0},
+	'deepseek/deepseek-v4-pro': {in: 0.66, out: 1.98, cacheRead: 0.022, cacheWrite: 0},
+	'deepseek/deepseek-v4.1-flash': {in: 0.15, out: 0.6, cacheRead: 0.003, cacheWrite: 0},
+	'google/gemini-3.1-flash-lite': {in: 0.25, out: 1.5, cacheRead: 0.03, cacheWrite: 0},
+	'google/gemini-3.5-flash': {in: 1.5, out: 9, cacheRead: 0.15, cacheWrite: 0},
+	'google/gemini-3.5-flash-lite': {in: 0.3, out: 2.5, cacheRead: 0.03, cacheWrite: 0},
+	'google/gemini-3.6-flash': {in: 1.5, out: 7.5, cacheRead: 0.15, cacheWrite: 0},
+	'google/gemini-3.7-flash': {in: 1.5, out: 7.5, cacheRead: 0.15, cacheWrite: 0.08334},
+	'google/gemini-3.8-flash': {in: 1.5, out: 7.5, cacheRead: 0.15, cacheWrite: 0},
+	'gpt-5.3-codex': {in: 2, out: 8, cacheRead: 0.5, cacheWrite: 0},
+	'gpt-5.4': {in: 2.5, out: 15, cacheRead: 0.25, cacheWrite: 0},
+	'gpt-5.4-mini': {in: 0.75, out: 4.5, cacheRead: 0.075, cacheWrite: 0},
+	'gpt-5.5': {in: 5, out: 30, cacheRead: 0.5, cacheWrite: 0},
+	'gpt-5.6-luna': {in: 0.2, out: 1.2, cacheRead: 0.02, cacheWrite: 0.25},
+	'gpt-5.6-sol': {in: 5, out: 30, cacheRead: 0.5, cacheWrite: 6.25},
+	'gpt-5.6-terra': {in: 2, out: 12, cacheRead: 0.2, cacheWrite: 2.5},
+	'gpt-6-astra': {in: 10, out: 50, cacheRead: 1, cacheWrite: 12.5},
+	'inclusionai/ling-3.0-flash-sante:free': {in: 0, out: 0, cacheRead: 0, cacheWrite: 0},
+	'meituan/LongCat-2.0:free': {in: 0, out: 0, cacheRead: 0, cacheWrite: 0},
+	'meta/muse-spark-1.1': {in: 1.25, out: 4.25, cacheRead: 0.15, cacheWrite: 0},
+	'meta/muse-spark-1.2': {in: 1.25, out: 4.25, cacheRead: 0.15, cacheWrite: 0},
+	'meta/muse-spark-1.2-contributor': {in: 0.1, out: 0.2, cacheRead: 0.002, cacheWrite: 0},
+	'meta/muse-spark-1.3': {in: 1.25, out: 4.25, cacheRead: 0.15, cacheWrite: 0},
+	'meta/muse-spark-1.3-contributor': {in: 0.1, out: 0.2, cacheRead: 0.002, cacheWrite: 0},
+	'moonshotai/Kimi-K2.5': {in: 0.6, out: 3, cacheRead: 0.1, cacheWrite: 0},
+	'moonshotai/Kimi-K2.6': {in: 0.95, out: 4, cacheRead: 0.16, cacheWrite: 0},
+	'moonshotai/Kimi-K2.7-Code': {in: 0.95, out: 4, cacheRead: 0.19, cacheWrite: 0},
+	'moonshotai/Kimi-K2.7-Code-Highspeed': {in: 1.9, out: 8, cacheRead: 0.38, cacheWrite: 0},
+	'moonshotai/Kimi-K3': {in: 3, out: 15, cacheRead: 0.3, cacheWrite: 0},
+	'nvidia/nemotron-3-ultra-550b-a55b': {in: 0.6, out: 2.4, cacheRead: 0.12, cacheWrite: 0},
+	'poolside/laguna-s-2.1-free': {in: 0, out: 0, cacheRead: 0, cacheWrite: 0},
+	'sakana/fugu-ultra': {in: 5, out: 30, cacheRead: 0.5, cacheWrite: 0},
+	'stepfun/Step-3.5-Flash': {in: 0.1, out: 0.3, cacheRead: 0.02, cacheWrite: 0},
+	'stepfun/Step-3.7-Flash': {in: 0.2, out: 1.15, cacheRead: 0.04, cacheWrite: 0},
+	'tencent/hy3-paid': {in: 0.14, out: 0.58, cacheRead: 0.035, cacheWrite: 0},
+	'tencent/hy4-preview': {in: 0.834, out: 2.501, cacheRead: 0.042, cacheWrite: 0},
+	'thinkingmachines/inkling': {in: 1, out: 4.05, cacheRead: 0.17, cacheWrite: 0},
+	'thinkingmachines/inkling-small': {in: 0.5, out: 1.2, cacheRead: 0.1, cacheWrite: 0},
+	'xai/grok-4.5': {in: 2, out: 6, cacheRead: 0.5, cacheWrite: 0},
+	'xai/grok-4.6': {in: 2, out: 6, cacheRead: 0.5, cacheWrite: 0},
+	'xiaomi/mimo-v2.5': {in: 0.14, out: 0.28, cacheRead: 0.0028, cacheWrite: 0},
+	'xiaomi/mimo-v2.5-pro': {in: 0.435, out: 0.87, cacheRead: 0.0036, cacheWrite: 0},
+	'z-ai/glm-5.3-flash': {in: 0.15, out: 0.5, cacheRead: 0.03, cacheWrite: 0},
+	'zai-org/GLM-5': {in: 1, out: 3.2, cacheRead: 0.2, cacheWrite: 0},
+	'zai-org/GLM-5.1': {in: 1.4, out: 4.4, cacheRead: 0.26, cacheWrite: 0},
+	'zai-org/GLM-5.2': {in: 1.4, out: 4.4, cacheRead: 0.26, cacheWrite: 0},
+	'zai-org/GLM-5.2-Fast': {in: 3, out: 10.25, cacheRead: 0.5, cacheWrite: 0},
+	'zai-org/GLM-5.3': {in: 1.4, out: 4.4, cacheRead: 0.26, cacheWrite: 0},
+};
+// <<< GENERATED:PRICES

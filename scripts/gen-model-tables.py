@@ -170,7 +170,10 @@ def main() -> int:
 
     if updated != source:
         open(args.ts, "w", encoding="utf-8").write(updated)
-    print(f"✓ 已更新 {args.ts}：窗口 {len(windows)} · 单价 {len(prices)} · 无窗口 {len(unknown)}")
+        print(f"✓ 已更新 {args.ts}：窗口 {len(windows)} · 单价 {len(prices)} · 无窗口 {len(unknown)}")
+    else:
+        # 没写文件就不能说「已更新」—— 输出和事实不一致时，看输出的人没法判断该不该提交
+        print(f"✓ 已是最新，未改动 {args.ts}：窗口 {len(windows)} · 单价 {len(prices)} · 无窗口 {len(unknown)}")
     return 0
 
 

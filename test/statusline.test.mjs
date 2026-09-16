@@ -540,6 +540,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	state.restore();
 }
 
+// ── 会话状态：恢复、换会话、transcript ──────────────────────────────────────────────
 // 恢复会话：session 名由 meta.json seed
 {
 	useHome(fakeHome);
@@ -916,7 +917,7 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	state.restore();
 }
 
-// ── git 的代价必须是有界、成比例、且永远不挡重绘 ─────────────────────────────────────
+// ── git 的代价必须是有界、成比例、且永远不挡重绘 ────────────────────────────────────
 // 用假时钟控制「实测耗时」，不靠 sleep；这里只替换 Date.now，事件循环仍走真实时间。
 const fakeClock = () => {
 	const real = Date.now;
@@ -1131,6 +1132,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	state.restore();
 }
 
+// ── 配置优先级与预设 ────────────────────────────────────────────────────────────────
 // 配置文件：用户级 < 项目级 < 命令行（命令行仅当取值异于内置默认时才算显式覆盖）
 {
 	const cfgHome = mkdtempSync(join(tmpdir(), 'statusline-cfghome-'));
@@ -1264,6 +1266,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(baseHome);
 }
 
+// ── /statusline 诊断报告 ────────────────────────────────────────────────────────────
 // /statusline：键/默认/生效/来源 全表 + 未知键与坏值点名
 {
 	useHome(homeWith({speedd: false, cache: 'yes', preset: 'nope'}));
@@ -1406,6 +1409,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(baseHome);
 }
 
+// ── /statusline config 交互式编辑 ───────────────────────────────────────────────────
 // /statusline config：交互式改配置 → 写入 + 立刻重绘
 {
 	const home = homeWith({});
@@ -1547,6 +1551,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(baseHome);
 }
 
+// ── 版本闸门 ────────────────────────────────────────────────────────────────────────
 // 版本闸门是硬闸门：宿主偏旧就整个停用 —— 不注册 flag、不注册命令、不画底栏、不 spawn git
 // 边界是查出来的：1.9.0 的 ModUi 没有 cmd.ui.capabilities（<1.10.0 会直接抛），1.10.0 起才有
 {
@@ -1665,6 +1670,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	process.argv[1] = argv1;
 }
 
+// ── 配置文件的边角情况 ──────────────────────────────────────────────────────────────
 // 没有配置文件但有命令行/预设定值时，报告不能自称「全部走内置默认」
 {
 	const home = homeWith(null);
@@ -1773,6 +1779,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	useHome(baseHome);
 }
 
+// ── 文档漂移守卫 ────────────────────────────────────────────────────────────────────
 // README 和 MIN_HOST_VERSION 不能各自漂：改了常量就必须同步文档（同 gen-model-tables 的思路）
 {
 	const root = fileURLToPath(new URL('..', import.meta.url));
