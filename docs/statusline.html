@@ -1,9 +1,9 @@
 <!doctype html>
 <!-- cmdc-statusline 演示图：配色按 index.ts 的 ANSI 输出还原（bold cyan 模型 / dim effort /
-     绿→红按格位渐变的进度条 / magenta 分支 / +绿 ~黄 ?灰），改完用 kit-capture 截 #screen。
-     TODO: statusline.png 还是旧图（显示 96k）。本文件已改为 470k
-     （deepseek-v4.1-flash 窗口 1M，47% 与 6/12 格才自洽），需在 Windows 侧
-     用 kit-capture 对 #screen 重截一次覆盖 docs/statusline.png。 -->
+     绿→红按格位渐变的进度条 / magenta 分支 / +绿 ~黄 ?灰）。出图流程：kit-capture
+     interact 截 #screen（--dsf 2）→ kit-shotframe --preset macos --title cmdc
+     --bg solid:#0d1117 --width 1600。注意用 Edge 渲染（--chromium 指向 msedge.exe），
+     本机 Chrome 的 --headless=new --screenshot 会在右/下边缘漏白边。 -->
 <html>
 <head>
 <meta charset="utf-8">
