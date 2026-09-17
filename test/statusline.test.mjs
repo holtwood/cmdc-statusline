@@ -418,15 +418,27 @@ const homeWith = (config, prefix = 'statusline-home-') => {
 	return home;
 };
 
+// 基线请求。speed 段用 request_start/end 之间的墙钟差估算输出速度（基线 167 输出 token）。
+// 原实现让 end 落在「start 后 25ms 的心跳」上，调度或系统挂起偶发把 elapsed 拉得很大、
+// speed 算出 <1 token/s 被 Math.round 丢弃，`tok/s` 段整段缺席、断言偶发红。
+// 这里把 end 时的墙钟固定成「start+250ms」，elapsed 确定、speed≈600 tok/s——
+// 断言不再依赖任何真实时长；要验证「速度段回归」改这里的常数即可。
 const useBaselineUsage = async (state, model = 'deepseek/deepseek-v4.1-flash') => {
 	state.events.model_request_start[0]({type: 'model_request_start', model});
 	await settle();
-	state.events.model_request_end[0]({
-		type: 'model_request_end',
-		model,
-		effort: 'max',
-		usage: {inputTokens: 31537, outputTokens: 167, cacheReadTokens: 7168, cacheWriteTokens: 0},
-	});
+	const realNow = Date.now;
+	const frozen = Date.now();
+	Date.now = () => frozen + 250;
+	try {
+		state.events.model_request_end[0]({
+			type: 'model_request_end',
+			model,
+			effort: 'max',
+			usage: {inputTokens: 31537, outputTokens: 167, cacheReadTokens: 7168, cacheWriteTokens: 0},
+		});
+	} finally {
+		Date.now = realNow;
+	}
 };
 
 const fakeHome = mkdtempSync(join(tmpdir(), 'statusline-home-'));
@@ -1777,6 +1789,66 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 		.message;
 	checkTrue('a clean write is not reported as shadowed', !message.includes('盖住'), message);
 	useHome(baseHome);
+}
+
+// ── 护栏回归：sessionId 消毒与 paint 故障 ─────────────────────────────────────────
+// sessionId 是唯一被拼进路径的外部字符串。每个危险 id 都配一个「只有穿越成功才读得到」
+// 的受害文件：消毒一旦失效断言立刻变红，而不是因为文件不存在而假绿。
+{
+	useHome(fakeHome);
+	// 三个穿越形态对应的可读目标：../evil → projects/evil.jsonl；a/b → slug/a/b.jsonl；
+	// 单独的 .. 拼上后缀正好是文件名 "…jsonl" 段，放进 slug 目录里。
+	writeFileSync(join(fakeHome, '.commandcode', 'projects', 'evil.jsonl'), JSON.stringify({costUsd: 0.7}));
+	mkdirSync(join(projectDir, 'a'), {recursive: true});
+	writeFileSync(join(projectDir, 'a', 'b.jsonl'), JSON.stringify({costUsd: 0.9}));
+	writeFileSync(join(projectDir, '...jsonl'), JSON.stringify({costUsd: 0.5}));
+	const guardSession = 'guard-session-id';
+	writeFileSync(join(projectDir, `${guardSession}.jsonl`), JSON.stringify({costUsd: 0.7}));
+
+	check('safe sessionId still reads', (await readSessionSeed(guardSession, FIXTURE_CWD)).costUsd, 0.7);
+	check('traversal cannot reach the victim', await readSessionSeed('../evil', FIXTURE_CWD), undefined);
+	check('slash cannot descend into a subdirectory', await readSessionSeed('a/b', FIXTURE_CWD), undefined);
+	check('bare dotdot cannot read the suffixed file', await readSessionSeed('..', FIXTURE_CWD), undefined);
+	useHome(baseHome);
+}
+
+// paint 故障不变成 mod_error：handler 不抛；连续失败只报一次；恢复后照常重绘、不再报
+{
+	const {api, state} = makeStub();
+	const originalError = console.error;
+	const errors = [];
+	console.error = (...args) => void errors.push(args);
+	const paintFailureCount = () => errors.filter(args => args[0] === 'statusline: paint failed').length;
+	try {
+		ns.default(api);
+		state.setFlagValue('refresh', '0');
+		state.setFlagValue('git', false);
+		// 让 setStatus 抛：模拟渲染路径崩溃 —— 不准逃出事件 handler
+		// model_request_start 与 model_request_end 各触发一次 paint，两次连错只该报一次
+		api.ui.setStatus = () => {
+			throw new Error('render boom');
+		};
+		let threw = false;
+		try {
+			await useBaselineUsage(state);
+		} catch {
+			threw = true;
+		}
+		check('a failing paint does not escape the handler', threw, false);
+		check('reported exactly once while failing', paintFailureCount(), 1);
+
+		// 恢复后照常重绘，且不再进报错通道
+		api.ui.setStatus = text => void state.statuses.push(text);
+		await useBaselineUsage(state);
+		await settle();
+		checkTrue('paint recovers once setStatus works', strip(state.statuses.at(-1)).includes('deepseek-v4.1-flash'), strip(state.statuses.at(-1)));
+		const before = errors.length;
+		await settle();
+		check('a healthy paint stops reporting', errors.length, before);
+	} finally {
+		console.error = originalError;
+		state.restore();
+	}
 }
 
 // ── 文档漂移守卫 ────────────────────────────────────────────────────────────────────

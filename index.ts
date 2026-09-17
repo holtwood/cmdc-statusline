@@ -769,16 +769,29 @@ export function versionAtLeast(actual: string, minimum: string): boolean {
 }
 
 // ── 会话数据（transcript / meta / 用户配置） ────────────────────────────────────────
-function sessionPath(sessionId: string, cwd: string, suffix: string): string {
+function sessionPath(
+	sessionId: string,
+	cwd: string,
+	suffix: string,
+): string | undefined {
+	// sessionId 是唯一被拼进路径的外部字符串（来自宿主事件，理论受控）——它是整条链的
+	// 唯一防线。用黑名单而不是白名单：宿主的 id 形状未必是我们见过的（白名单会误伤带点的
+	// id，把恢复功能静默杀失效，比不防更糟）。真正能逃出目录的只有路径分隔符
+	// （/ 或 \，join 把它们原样带进文件路径）与恰好是「.」「..」的段（OS 特判为父目录）；
+	// 其余字符拼成单段文件名都无害。拦这四类就够。判不了的一律按「没有这个文件」处理
+	//（两个调用点都把读不到当无数据）。
+	if (sessionId === '' || /[\\/]/.test(sessionId) || sessionId === '.' || sessionId === '..') {
+		return undefined;
+	}
 	const slug = cwd.replace(/^[/\\]+/, '').replace(/[/\\:]+/g, '-');
 	return join(homedir(), '.commandcode', 'projects', slug, `${sessionId}${suffix}`);
 }
 
 function readSessionTitle(sessionId: string, cwd: string): string | undefined {
 	try {
-		const meta = JSON.parse(
-			readFileSync(sessionPath(sessionId, cwd, '.meta.json'), 'utf8'),
-		) as {title?: unknown};
+		const path = sessionPath(sessionId, cwd, '.meta.json');
+		if (!path) return undefined;
+		const meta = JSON.parse(readFileSync(path, 'utf8')) as {title?: unknown};
 		return typeof meta.title === 'string' && meta.title.trim() ? meta.title : undefined;
 	} catch {
 		return undefined;
@@ -821,8 +834,10 @@ export async function readSessionSeed(
 ): Promise<SessionSeed | undefined> {
 	let reader: ReturnType<typeof createInterface> | undefined;
 	try {
+		const path = sessionPath(sessionId, cwd, '.jsonl');
+		if (!path) return undefined;
 		reader = createInterface({
-			input: createReadStream(sessionPath(sessionId, cwd, '.jsonl'), {
+			input: createReadStream(path, {
 				encoding: 'utf8',
 			}),
 			crlfDelay: Infinity,
@@ -1404,9 +1419,18 @@ export default function (cmd: ModApi): void {
 
 	// 重绘是同步且幂等的（宿主自己会去重相同文本），所以它永远不等 git：
 	// 从前 refresh() 先 await git 再画，一个 8 秒的 git status 会把模型/花费/上下文一起卡 8 秒。
+	// 渲染或宿主 setStatus 出错时降级为「这次不画」，别让它变成每个事件一个 mod_error。
+	// 只报一次：渲染路径要是有 bug，连错 N 帧也没人看，第一条就够定位；恢复后复位、再错再报。
+	let renderFailedNotified = false;
 	const paint = (): void => {
 		if (!rendersFooter()) return;
-		cmd.ui.setStatus(composer() || null);
+		try {
+			cmd.ui.setStatus(composer() || null);
+			renderFailedNotified = false;
+		} catch (error) {
+			if (!renderFailedNotified) console.error('statusline: paint failed', error);
+			renderFailedNotified = true;
+		}
 	};
 
 	const refresh = (): void => {
