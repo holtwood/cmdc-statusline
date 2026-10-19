@@ -42,10 +42,10 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/holtwood/cmdc-statusline.git"
+		"url": "git+https://github.com/holtwood-projects/cmdc-statusline.git"
 	},
-	"homepage": "https://github.com/holtwood/cmdc-statusline#readme",
+	"homepage": "https://github.com/holtwood-projects/cmdc-statusline#readme",
 	"bugs": {
-		"url": "https://github.com/holtwood/cmdc-statusline/issues"
+		"url": "https://github.com/holtwood-projects/cmdc-statusline/issues"
 	}
 }
