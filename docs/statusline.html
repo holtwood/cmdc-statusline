@@ -1,53 +1,239 @@
 <!doctype html>
-<!-- cmdc-statusline 演示图：配色按 index.ts 的 ANSI 输出还原（bold cyan 模型 / dim effort /
-     绿→红按格位渐变的进度条 / magenta 分支 / +绿 ~黄 ?灰）。出图流程：kit-capture
-     interact 截 #screen（--dsf 2）→ kit-shotframe --preset macos --title cmdc
-     --bg solid:#0d1117 --width 1600。注意用 Edge 渲染（--chromium 指向 msedge.exe），
-     本机 Chrome 的 --headless=new --screenshot 会在右/下边缘漏白边。 -->
+<!-- cmdc-statusline 演示图。状态栏文字必须与 index.ts 的真实输出一致：
+     model / effort / 渐变条 + token + % / cache / cost / speed / sub / session 名 /
+     branch ↑ahead + staged ~modified ?untracked / cwd。
+     配色按 ANSI 输出还原（bold cyan 模型、dim effort、green→yellow 渐变条、
+     magenta 分支、+绿 ~黄 ?灰）。出图：Windows Edge --headless=new --screenshot，
+     --force-device-scale-factor=2 渲染后降采样到 1600px 宽。 -->
 <html>
 <head>
 <meta charset="utf-8">
 <style>
-  html, body { margin: 0; background: transparent; }
-  #screen {
-    box-sizing: border-box;
-    width: max-content;
-    padding: 30px 34px;
-    background: #14171c;
-    color: #c9d1d9;
-    font: 15px/1.7 "Cascadia Code", "Cascadia Mono", "JetBrains Mono", Consolas, Menlo, monospace;
-    white-space: pre;
+  html, body {
+    margin: 0;
+    width: 1600px;
+    height: 500px;
+    overflow: hidden;
+    background: #070a0f;
   }
-  .prompt-char { color: #3fb950; }
-  .reply       { color: #7d8590; }
-  .inputbox {
-    margin-top: 10px;
-    border: 1px solid #30363d;
-    border-radius: 10px;
-    padding: 8px 14px;
+  body {
+    font-family: "Cascadia Code", "Cascadia Mono", Consolas, Menlo, monospace;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+  }
+  #stage {
+    position: relative;
+    width: 1600px;
+    height: 500px;
+    background:
+      radial-gradient(900px 460px at 12% -10%, rgba(45, 212, 191, 0.13), transparent 62%),
+      radial-gradient(860px 520px at 92% 112%, rgba(139, 92, 246, 0.14), transparent 62%),
+      #070a0f;
+  }
+  #stage::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+    background-size: 26px 26px;
+    opacity: 0.45;
+    -webkit-mask-image: radial-gradient(780px 380px at 50% 46%, #000 0%, transparent 78%);
+    mask-image: radial-gradient(780px 380px at 50% 46%, #000 0%, transparent 78%);
+  }
+  .glow {
+    position: absolute;
+    left: 300px;
+    top: 70px;
+    width: 1000px;
+    height: 380px;
+    background: radial-gradient(ellipse at center, rgba(45, 212, 191, 0.10), transparent 68%);
+    filter: blur(42px);
+  }
+  .frame {
+    position: absolute;
+    left: 120px;
+    top: 48px;
+    width: 1360px;
+    padding: 1px;
+    border-radius: 18px;
+    background: linear-gradient(140deg,
+      rgba(45, 212, 191, 0.50),
+      rgba(255, 255, 255, 0.07) 34%,
+      rgba(139, 92, 246, 0.42));
+    box-shadow:
+      0 46px 120px rgba(0, 0, 0, 0.72),
+      0 0 70px rgba(45, 212, 191, 0.05);
+  }
+  .window {
+    display: flex;
+    flex-direction: column;
+    height: 404px;
+    border-radius: 17px;
+    background: linear-gradient(180deg, #0d1219, #0b0f16 38%, #0a0e14);
+    overflow: hidden;
+  }
+  .titlebar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: 40px;
+    padding: 0 15px;
+    background: linear-gradient(180deg, #151b24, #0f141c);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .lights { display: flex; gap: 8px; }
+  .light {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.35);
+  }
+  .red { background: #ff5f57; }
+  .amber { background: #febc2e; }
+  .green-dot { background: #28c840; }
+  .title {
+    position: absolute;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 12px;
+    letter-spacing: 0.3px;
+    color: #7d8590;
+  }
+  .pill {
+    position: absolute;
+    right: 14px;
+    padding: 2px 8px;
+    border: 1px solid rgba(56, 189, 248, 0.20);
+    border-radius: 999px;
+    background: rgba(56, 189, 248, 0.08);
+    color: #7dd3fc;
+    font-size: 11px;
+    letter-spacing: 0.2px;
+  }
+  .body { padding: 22px 30px 0; }
+  .prompt { font-size: 16px; color: #e6edf3; }
+  .chev { margin-right: 8px; color: #3fb950; }
+  .reply {
+    margin-top: 14px;
+    font-size: 15px;
     color: #8b949e;
   }
-  .cursor { color: #58a6ff; }
-  .statusline { margin-top: 10px; }
-  .sep    { color: #484f58; }
-  .model  { color: #39c5cf; font-weight: 700; }
+  .reply .mark { color: #3fb950; }
+  .code { color: #a5d6ff; }
+  .diff {
+    margin-top: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 10px;
+    background: #080c12;
+    overflow: hidden;
+  }
+  .diff-head {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 13px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 12.5px;
+    color: #7d8590;
+  }
+  .diff-head .path { color: #a5d6ff; }
+  .plus { color: #3fb950; }
+  .minus { color: #f85149; }
+  .diff-body {
+    padding: 7px 0;
+    font-size: 13.5px;
+    line-height: 1.55;
+  }
+  .line { display: flex; padding: 0 13px; white-space: pre; }
+  .line .sign { width: 15px; flex: none; }
+  .add { background: rgba(63, 185, 80, 0.065); }
+  .del { background: rgba(248, 81, 73, 0.055); }
+  .add .sign { color: #3fb950; }
+  .del .sign { color: #f85149; }
+  .kw { color: #ff7b72; }
+  .fn { color: #d2a8ff; }
+  .ty { color: #79c0ff; }
+  .str { color: #a5d6ff; }
+  .cmt { color: #6e7681; }
+  .input {
+    margin-top: 14px;
+    padding: 9px 14px;
+    border: 1px solid #263041;
+    border-radius: 10px;
+    background: #080c12;
+    font-size: 15px;
+    color: #8b949e;
+  }
+  .cursor {
+    display: inline-block;
+    width: 8px;
+    height: 17px;
+    margin-left: 2px;
+    vertical-align: -3px;
+    background: #58a6ff;
+    box-shadow: 0 0 10px rgba(88, 166, 255, 0.65);
+  }
+  .status {
+    margin-top: auto;
+    padding: 12px 30px 15px;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+    font-size: 15px;
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+  .sep { color: #3b4452; }
+  .model { color: #39c5cf; font-weight: 700; }
   .effort { color: #6e7681; }
-  .gray   { color: #7d8590; }
-  .green  { color: #3fb950; }
+  .gray { color: #7d8590; }
+  .green { color: #3fb950; }
   .yellow { color: #d29922; }
-  .name   { color: #e6edf3; font-weight: 700; }
+  .name { color: #e6edf3; font-weight: 700; }
   .branch { color: #d2a8ff; }
-  .dim    { color: #6e7681; }
-  .bar    { letter-spacing: 0; }
+  .dim { color: #6e7681; }
+  .bar .fill { text-shadow: 0 0 7px rgba(120, 200, 0, 0.35); }
 </style>
 </head>
 <body>
-<div id="screen"><span class="prompt-char">❯</span> <span style="color:#e6edf3">help me refactor the auth middleware</span>
+<div id="stage">
+  <div class="glow"></div>
+  <div class="frame">
+    <div class="window">
+      <div class="titlebar">
+        <div class="lights">
+          <span class="light red"></span>
+          <span class="light amber"></span>
+          <span class="light green-dot"></span>
+        </div>
+        <div class="title">cmdc — acme/api</div>
+        <div class="pill">statusline</div>
+      </div>
 
-<span class="reply">⏺ Done — extracted <span style="color:#a5d6ff">validateToken()</span> into <span style="color:#a5d6ff">src/auth/token.ts</span> (+48 −12).</span>
+      <div class="body">
+        <div class="prompt"><span class="chev">❯</span>help me refactor the auth middleware</div>
 
-<div class="inputbox">&gt; <span class="cursor">▍</span></div>
-<div class="statusline"><span class="model">deepseek-v4.1-flash</span><span class="sep"> │ </span><span class="effort">max</span><span class="sep"> │ </span><span class="bar"><span style="color:rgb(0,200,0)">█</span><span style="color:rgb(36,200,0)">█</span><span style="color:rgb(73,200,0)">█</span><span style="color:rgb(109,200,0)">█</span><span style="color:rgb(145,200,0)">█</span><span style="color:rgb(182,200,0)">█</span><span class="dim">░░░░░░</span></span> <span class="gray">470k</span> <span class="gray">(47%)</span><span class="sep"> │ </span><span class="green">cache 99%</span><span class="sep"> │ </span><span class="gray">$0.013</span><span class="sep"> │ </span><span class="gray">42 tok/s</span><span class="sep"> │ </span><span class="gray">sub 16k</span><span class="sep"> │ </span><span class="name">Simple Reply</span><span class="sep"> │ </span><span class="branch">main</span><span class="dim"> ↑1</span><span class="sep"> │ </span><span class="green">+1</span> <span class="yellow">~2</span> <span class="gray">?1</span><span class="sep"> │ </span><span class="gray">my-project</span></div>
+        <div class="reply"><span class="mark">⏺</span> Done — extracted <span class="code">validateToken()</span> into <span class="code">src/auth/token.ts</span></div>
+
+        <div class="diff">
+          <div class="diff-head">
+            <span class="path">src/auth/token.ts</span>
+            <span><span class="plus">+38</span> <span class="minus">−12</span></span>
+          </div>
+          <div class="diff-body">
+            <div class="line add"><span class="sign">+</span><span><span class="kw">export function</span> <span class="fn">validateToken</span>(token: <span class="ty">string</span>): <span class="ty">Claims</span> {</span></div>
+            <div class="line add"><span class="sign">+</span><span>  <span class="kw">return</span> <span class="fn">verify</span>(token, <span class="fn">secret</span>(), { algorithms: [<span class="str">'HS256'</span>] });</span></div>
+            <div class="line add"><span class="sign">+</span><span>}</span></div>
+            <div class="line del"><span class="sign">-</span><span class="cmt">// TODO: inline validation lives in middleware.ts</span></div>
+          </div>
+        </div>
+
+        <div class="input">&gt;<span class="cursor"></span></div>
+      </div>
+
+      <div class="status"><span class="model">deepseek-v4.1-flash</span><span class="sep"> │ </span><span class="effort">max</span><span class="sep"> │ </span><span class="bar"><span class="fill" style="color:rgb(0,200,0)">█</span><span class="fill" style="color:rgb(36,200,0)">█</span><span class="fill" style="color:rgb(73,200,0)">█</span><span class="fill" style="color:rgb(109,200,0)">█</span><span class="fill" style="color:rgb(145,200,0)">█</span><span class="fill" style="color:rgb(182,200,0)">█</span><span class="dim">░░░░░░</span></span> <span class="gray">470k</span> <span class="gray">(47%)</span><span class="sep"> │ </span><span class="green">cache 99%</span><span class="sep"> │ </span><span class="gray">$0.013</span><span class="sep"> │ </span><span class="gray">42 tok/s</span><span class="sep"> │ </span><span class="gray">sub 16k</span><span class="sep"> │ </span><span class="name">Simple Reply</span><span class="sep"> │ </span><span class="branch">main</span><span class="dim"> ↑1</span><span class="sep"> │ </span><span class="green">+1</span> <span class="yellow">~2</span> <span class="gray">?1</span><span class="sep"> │ </span><span class="gray">my-project</span></div>
+    </div>
+  </div>
 </div>
 </body>
 </html>
