@@ -69,6 +69,13 @@ export interface ModApi {
 		spec: {type: 'boolean' | 'string'; default?: boolean | string; description?: string},
 	): Disposable;
 	getFlag(name: string): boolean | string | undefined;
+	// 1.88.2 起确认存在；旧宿主（1.82 附近）可能没有 / 只给 null，所以声明为可选并允许 null。
+	// 只取 contextWindow 作为生成表未命中时的兜底，不拿 tokens 当上下文来源。
+	getContextUsage?: () => {
+		tokens?: number | null;
+		contextWindow?: number | null;
+		percent?: number | null;
+	} | undefined;
 	on(event: string, handler: (event: unknown) => void): Disposable;
 	addCommand(command: ModCommand): Disposable;
 	exec(options: {

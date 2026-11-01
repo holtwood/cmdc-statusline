@@ -1,7 +1,7 @@
 {
 	"name": "cmdc-statusline",
-	"version": "0.7.0",
-	"description": "A status line mod for Command Code (cmdc): model, gradient context bar, cache hit rate, session cost, output speed, sub-agent usage, session name and git state.",
+	"version": "0.8.0",
+	"description": "A status line mod for Command Code (cmdc): model, gradient context bar, cache hit rate, session cost, decode speed, sub-agent usage, account quota, activity, duration, session name and git state.",
 	"type": "module",
 	"commandcode": {
 		"mods": [

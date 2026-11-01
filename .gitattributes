@@ -1,0 +1,3 @@
+# mod-api.d.ts has been CRLF historically; treat the CR as part of the line ending,
+# so `git diff --check` does not report every touched line as trailing whitespace.
+mod-api.d.ts whitespace=cr-at-eol

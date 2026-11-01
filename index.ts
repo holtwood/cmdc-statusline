@@ -20,8 +20,11 @@
 //   --mod-option statusline.<键>=<值>       命令行（仅在取值与内置默认不同时才判定为显式覆盖——
 //                                           cmdc 会把 --mod-option 的值从 mod 可见的 argv 里抹掉，
 //                                           故无法精确区分「显式传了默认值」）
-//   可用键：model/effort/context/bar/bar-width/percent/cache/cost/speed/sub/name/git/cwd/
-//          preset/raw-model/ascii/refresh/lang（lang=zh|en 只影响报告与弹窗文案）
+//   可用键：model/effort/context/bar/bar-width/percent/cache/cost/speed/sub/quota/activity/
+//          duration/name/git/cwd/preset/raw-model/ascii/refresh/width/lang
+//          （lang=zh|en 只影响报告与弹窗文案；width=0 跟随终端，非 0 是渲染行最大列数，
+//           给不报终端宽度的桌面/移动端视图用；quota 默认关，开启后会读本机 CLI 凭据访问
+//           账号用量接口——未公开接口，失败只是少一段）
 //   preset：full（全部，默认）/ minimal（模型+effort+上下文+分支）/ usage（上下文+缓存+花费+子代理）。
 //           它只决定「哪些段位开」，写死某个键即可覆盖它；渲染开关（ascii/raw-model）与它无关。
 //
@@ -36,8 +39,10 @@
 //                       类型不对的键单独报警；文件来源也一并列出
 //   /statusline config  用 cmd.ui.select/input/confirm 交互式改，选完即写入并立刻重绘，无需 /reload
 //
-// 窄终端：按优先级降级（先丢 cwd→速度→effort→子代理→缓存→session 名→花费→改动数，
-//         上下文由「条+token+百分比」逐级退化，支路最后丢，模型永不丢），并监听 resize 立即重绘。
+// 窄终端：按优先级降级（先丢 cwd→时长→活动→速度→effort→子代理→session 名→周配额→缓存→
+//         5h 配额→花费→改动数，上下文由「条+token+百分比」逐级退化，支路最后丢，模型永不丢），
+//         并监听 resize 立即重绘。
+//         宿主状态行内容宽度 = 终端列数 - 3；不报终端宽度的桌面/移动端视图用 width 显式定宽。
 
 import {createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync} from 'node:fs';
 import {homedir} from 'node:os';
@@ -71,9 +76,25 @@ type SessionEvent = {
 	readonly sessionId?: string;
 };
 
-type SubagentStopEvent = {
+type SubagentEvent = {
+	readonly toolCallId?: string;
 	readonly subagentType?: string;
 	readonly tokensUsed?: number;
+};
+
+type DeltaEvent = {
+	readonly delta?: string;
+};
+
+type QuotaWindow = {
+	readonly used: number;
+	readonly cap: number;
+	readonly resetAt?: number;
+};
+
+type QuotaData = {
+	readonly fiveHour?: QuotaWindow;
+	readonly weekly?: QuotaWindow;
 };
 
 type GitInfo = {
@@ -94,7 +115,18 @@ type Snapshot = GitInfo & {
 	title?: string;
 	costUsd: number;
 	speed?: number;
+	/** 上一次请求的首 token 等待（毫秒）；只进报告，不占底栏宽度 */
+	ttftMs?: number;
 	subTokens: number;
+	/** 本会话已完成的模型请求步数 / 工具调用数 / 其中失败的次数 */
+	steps: number;
+	tools: number;
+	toolErrors: number;
+	/** 正在运行的子代理数（subagent_start … stop） */
+	activeAgents: number;
+	/** 会话起点（transcript 首条时间戳优先，否则本进程绑定时刻） */
+	startedAt?: number;
+	quota?: QuotaData;
 };
 
 type Segments = {
@@ -107,6 +139,9 @@ type Segments = {
 	readonly cost: boolean;
 	readonly speed: boolean;
 	readonly sub: boolean;
+	readonly quota: boolean;
+	readonly activity: boolean;
+	readonly duration: boolean;
 	readonly name: boolean;
 	readonly git: boolean;
 	readonly cwd: boolean;
@@ -123,6 +158,8 @@ type SessionState = {
 	sessionCost: number;
 	/** transcript 有 usage/model 行但行尾锚全空 → 格式可能变了，报告里点名 */
 	seedDrifted: boolean;
+	/** 运行中的子代理：toolCallId → 该 agent 已消耗的 token（取历史最大值，避免重复累计） */
+	liveAgents: Map<string, number>;
 	snapshot: Snapshot;
 };
 
@@ -132,6 +169,7 @@ const freshSession = (id?: string): SessionState => ({
 	seededCost: 0,
 	sessionCost: 0,
 	seedDrifted: false,
+	liveAgents: new Map(),
 	snapshot: {
 		isRepo: false,
 		ahead: 0,
@@ -141,6 +179,10 @@ const freshSession = (id?: string): SessionState => ({
 		untracked: 0,
 		costUsd: 0,
 		subTokens: 0,
+		steps: 0,
+		tools: 0,
+		toolErrors: 0,
+		activeAgents: 0,
 	},
 });
 
@@ -151,6 +193,10 @@ type ComposeOptions = {
 	readonly barWidth: number;
 	readonly maxWidth?: number;
 	readonly cwd?: string;
+	/** 宿主给出的有效窗口；缺省时回落到生成的窗口表 */
+	readonly contextWindow?: number;
+	/** 计时基准（duration / 配额倒计时）；纯函数不自己读时钟 */
+	readonly now?: number;
 };
 
 type ColorMode = 'truecolor' | 'ansi256' | 'ascii';
@@ -162,8 +208,20 @@ const SEP = ' │ ';
 const GIT_TTL_MS = 5000;
 const GIT_TIMEOUT_MS = 10_000;
 const TITLE_COLUMNS = 24;
+// 宿主状态行内容宽度 = 终端列数 - 3：StatusLine 左侧 paddingLeft:2，右侧再留 1 列；
+// 超出时宿主用 truncate-end 直接切尾（不是换行）。见 docs/host-internals.md。
+const STATUS_MARGIN = 3;
 const COST_WARN_USD = 1;
 const COST_ALERT_USD = 10;
+// 解码速度：首 token 之后至少流式这么久才算得出速率；再短就是一次 flush，用墙钟兜底
+const MIN_DECODE_MS = 100;
+// 单次 flush 的判定：没有思考 token 抢跑、文本增量 ≤2 个、且首文本到结束不足 250ms
+const UNTIMED_WINDOW_MS = 250;
+const UNTIMED_MAX_DELTAS = 2;
+// 账号窗口：宿主 /usage 用的同一个（未公开）接口，120s 刷新一次，失败静默
+const QUOTA_ENDPOINT = 'https://api.commandcode.ai/alpha/billing/credits';
+const QUOTA_TTL_MS = 120_000;
+const QUOTA_TIMEOUT_MS = 3000;
 
 // 慢仓库的自适应退避：放行间隔 = max(GIT_TTL_MS, GIT_BACKOFF × 上次实测耗时)，
 // 也就是「git 最多占 20% 的墙钟时间」。正常仓库永远被 5 秒地板罩住，行为与从前完全一致。
@@ -183,12 +241,16 @@ const ANSI_PATTERN = /\u001b\[[0-9;]*m/g;
 // 各自有一个在这里的排名。条目键的类型就取自这张表（DropKey），所以 push() 里写错名字
 // 是编译错误，不会像从前那样静默落到一个中间优先级上。
 const DROP_ORDER = {
-	cwd: 11,
-	speed: 10,
-	effort: 9,
-	sub: 8,
+	cwd: 15,
+	duration: 14,
+	activity: 13,
+	speed: 12,
+	effort: 11,
+	sub: 10,
+	name: 9,
+	quotaWeek: 8,
 	cache: 7,
-	name: 6,
+	quota5h: 6,
 	cost: 5,
 	gitChanges: 4,
 	context: 3,
@@ -263,6 +325,57 @@ export function formatCost(usd: number): string {
 	const digits = usd < 0.0001 ? 5 : usd < 0.01 ? 4 : usd < 1 ? 3 : 2;
 	const text = usd.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
 	return `$${text}`;
+}
+
+// 一个函数覆盖两种场景：TTFT/耗时（<60s 用 ms/s）与会话时长（h/m）
+export function formatDuration(ms: number): string {
+	if (!Number.isFinite(ms) || ms < 0) return '-';
+	if (ms < 1000) return `${Math.round(ms)}ms`;
+	if (ms < 60_000) {
+		const seconds = (ms / 1000).toFixed(1).replace(/\.0$/, '');
+		return `${seconds}s`;
+	}
+	const totalMinutes = Math.floor(ms / 60_000);
+	const hours = Math.floor(totalMinutes / 60);
+	const minutes = totalMinutes % 60;
+	return hours > 0 ? `${hours}h${String(minutes).padStart(2, '0')}m` : `${minutes}m`;
+}
+
+// 配额窗口的重置倒计时：↻2h10m / ↻3d11h / ↻45m；已过期不给文本
+export function formatCountdown(ms: number): string {
+	if (!Number.isFinite(ms) || ms <= 0) return '';
+	const minutes = Math.ceil(ms / 60_000);
+	const days = Math.floor(minutes / 1440);
+	const hours = Math.floor((minutes % 1440) / 60);
+	const rest = minutes % 60;
+	if (days > 0) return `${days}d${hours}h`;
+	if (hours > 0) return `${hours}h${rest}m`;
+	return `${rest}m`;
+}
+
+// 未公开接口的响应形状：{windowLimits:{fiveHour,weekly:{used,cap,resetAt(ms)}}}
+export function normalizeQuota(body: unknown): QuotaData | undefined {
+	// 宿主 /usage 的投影读的是 body.windowLimits；响应把同一份放进 body.credits 的变体也认，
+	// 免得接口换个嵌套层级就整段消失。
+	const payload = body as
+		| {windowLimits?: unknown; credits?: {windowLimits?: unknown}}
+		| null
+		| undefined;
+	const limits = payload?.windowLimits ?? payload?.credits?.windowLimits;
+	if (!limits || typeof limits !== 'object') return undefined;
+	const read = (value: unknown): QuotaWindow | undefined => {
+		if (!value || typeof value !== 'object') return undefined;
+		const {used, cap, resetAt} = value as Record<string, unknown>;
+		if (typeof used !== 'number' || !Number.isFinite(used) || used < 0) return undefined;
+		if (typeof cap !== 'number' || !Number.isFinite(cap) || cap <= 0) return undefined;
+		const reset =
+			typeof resetAt === 'number' && Number.isFinite(resetAt) && resetAt > 0 ? resetAt : undefined;
+		return {used, cap, ...(reset !== undefined ? {resetAt: reset} : {})};
+	};
+	const fiveHour = read((limits as Record<string, unknown>).fiveHour);
+	const weekly = read((limits as Record<string, unknown>).weekly);
+	if (!fiveHour && !weekly) return undefined;
+	return {...(fiveHour ? {fiveHour} : {}), ...(weekly ? {weekly} : {})};
 }
 
 export function estimateCost(usage: Usage, model?: string): number {
@@ -415,7 +528,7 @@ export function composeLine(
 		push('effort', [paint(ANSI.dim, snapshot.effort)]);
 	}
 	if (segments.context && snapshot.contextTokens) {
-		const window = contextWindowFor(snapshot.model);
+		const window = options.contextWindow ?? contextWindowFor(snapshot.model);
 		const percent = window ? (snapshot.contextTokens / window) * 100 : undefined;
 		const withBar = segments.bar && percent !== undefined && options.barWidth > 0;
 		const tokens = paint(
@@ -454,6 +567,49 @@ export function composeLine(
 	}
 	if (segments.sub && snapshot.subTokens > 0) {
 		push('sub', [paint(ANSI.gray, `sub ${formatTokens(snapshot.subTokens)}`)]);
+	}
+	if (segments.quota && snapshot.quota) {
+		const quota = (label: string, window: QuotaWindow | undefined): string[] => {
+			if (!window || window.cap <= 0) return [];
+			const percent = (window.used / window.cap) * 100;
+			const code = percent >= 90 ? ANSI.red : percent >= 80 ? ANSI.yellow : ANSI.gray;
+			const head = `${paint(ANSI.gray, label)} ${paint(code, `${Math.round(percent)}%`)}`;
+			const reset =
+				window.resetAt !== undefined && options.now !== undefined
+					? formatCountdown(window.resetAt - options.now)
+					: '';
+			return [...new Set([reset ? `${head} ${paint(ANSI.dim, `↻${reset}`)}` : head, head])];
+		};
+		push('quota5h', quota('5h', snapshot.quota.fiveHour));
+		push('quotaWeek', quota('wk', snapshot.quota.weekly));
+	}
+	if (segments.activity) {
+		const plural = (count: number, word: string): string =>
+			`${count} ${word}${count === 1 ? '' : 's'}`;
+		const steps = snapshot.steps > 0 ? paint(ANSI.gray, plural(snapshot.steps, 'step')) : '';
+		const tools = snapshot.tools > 0 ? paint(ANSI.gray, plural(snapshot.tools, 'tool')) : '';
+		const errors = snapshot.toolErrors > 0 ? paint(ANSI.red, `${snapshot.toolErrors} err`) : '';
+		const agents =
+			snapshot.activeAgents > 0
+				? paint(ANSI.cyan, plural(snapshot.activeAgents, 'agent'))
+				: '';
+		const join = (parts: string[]): string =>
+			parts.filter(Boolean).join(paint(ANSI.dim, ' · '));
+		push('activity', [
+			join([steps, tools, errors, agents]),
+			join([steps, tools, errors]),
+			join([steps, tools]),
+			steps,
+		]);
+	}
+	if (segments.duration && snapshot.startedAt !== undefined && options.now !== undefined) {
+		const elapsed = options.now - snapshot.startedAt;
+		if (elapsed >= 60_000) {
+			push('duration', [
+				paint(ANSI.gray, formatDuration(elapsed)),
+				paint(ANSI.gray, `${Math.floor(elapsed / 60_000)}m`),
+			]);
+		}
 	}
 	if (segments.name && snapshot.title) {
 		push('name', [paint(ANSI.bold, truncateToWidth(snapshot.title, TITLE_COLUMNS))]);
@@ -536,8 +692,11 @@ const FLAG_SPECS: readonly FlagSpec[] = [
 	{name: 'percent', type: 'boolean', default: true, description: '显示上下文占模型窗口的百分比', descriptionEn: 'context share of the model window', segment: true},
 	{name: 'cache', type: 'boolean', default: true, description: '显示上一次请求的缓存命中率', descriptionEn: 'cache hit rate of the last request', segment: true},
 	{name: 'cost', type: 'boolean', default: true, description: '显示本次会话累计花费（按内置单价表推算）', descriptionEn: 'session cost (estimated via the built-in price table)', segment: true},
-	{name: 'speed', type: 'boolean', default: true, description: '显示上一次请求的输出速度（tok/s）', descriptionEn: 'output speed of the last request (tok/s)', segment: true},
+	{name: 'speed', type: 'boolean', default: true, description: '显示上一次请求的解码速度（首 token→结束；测不出时退回墙钟）', descriptionEn: 'decode speed of the last request (first token → end; wall clock when unmeasurable)', segment: true},
 	{name: 'sub', type: 'boolean', default: true, description: '显示子代理（agent 工具）累计消耗 token', descriptionEn: 'tokens burned by sub-agents', segment: true},
+	{name: 'quota', type: 'boolean', default: false, description: '显示账号 5 小时 / 每周用量（读取本机 CLI 凭据访问未公开接口；默认关闭）', descriptionEn: 'account 5-hour / weekly usage (reads the local CLI credential and calls an undocumented endpoint; off by default)', segment: true},
+	{name: 'activity', type: 'boolean', default: false, description: '显示本会话的模型步数 / 工具调用 / 运行中的子代理', descriptionEn: 'model steps / tool calls / running sub-agents this session', segment: true},
+	{name: 'duration', type: 'boolean', default: false, description: '显示会话已用时间（满 1 分钟后出现）', descriptionEn: 'elapsed session time (appears after one minute)', segment: true},
 	{name: 'name', type: 'boolean', default: true, description: '显示 session 名', descriptionEn: 'show the session name', segment: true},
 	{name: 'git', type: 'boolean', default: true, description: '显示 git 分支与改动数', descriptionEn: 'git branch + changes', segment: true},
 	{name: 'cwd', type: 'boolean', default: true, description: '显示当前目录名', descriptionEn: 'current directory basename', segment: true},
@@ -546,6 +705,7 @@ const FLAG_SPECS: readonly FlagSpec[] = [
 	{name: 'raw-model', type: 'boolean', default: false, description: '模型显示完整 id（不省略 vendor 前缀）', descriptionEn: 'full model id (keep the vendor prefix)'},
 	{name: 'ascii', type: 'boolean', default: false, description: '纯 ASCII 渲染（无 Unicode 块、无颜色）', descriptionEn: 'plain ASCII rendering (no Unicode blocks, no colour)'},
 	{name: 'refresh', type: 'string', default: '10', description: '刷新间隔秒数（0 = 关闭定时刷新）', descriptionEn: 'seconds between git re-reads (0 disables polling)', numeric: true, max: 3600},
+	{name: 'width', type: 'string', default: '0', description: '状态栏最大列数（0 = 跟随终端；桌面/移动端视图可按需设 40）', descriptionEn: 'max columns of the status line (0 = follow the terminal; set e.g. 40 for narrow desktop/mobile views)', numeric: true, max: 1000},
 	{name: 'lang', type: 'string', default: 'zh', description: '界面语言：zh / en', descriptionEn: 'ui language: zh / en'},
 ];
 
@@ -803,6 +963,8 @@ type SessionSeed = {
 	readonly model?: string;
 	readonly effort?: string;
 	readonly usage?: Usage;
+	/** transcript 第一条消息的时间戳（毫秒）：恢复会话时用它当计时起点 */
+	readonly startedAt?: number;
 	/** transcript 里有 usage+model 记录、但行尾锚一条都没匹配上 → 产品的记录格式可能变了 */
 	readonly drifted?: boolean;
 };
@@ -846,11 +1008,22 @@ export async function readSessionSeed(
 		let model: string | undefined;
 		let effort: string | undefined;
 		let usage: Usage | undefined;
+		let startedAt: number | undefined;
 		// 计数而不只取「最后一条」：transcript 里同时带 usage 与 model 的行存在、但行尾锚
 		// 一条都没中 → 行形状变了。没有这个信号，格式漂移会静默变成「花费归零/上下文消失」。
 		let usageLines = 0;
 		let tailHits = 0;
 		for await (const line of reader) {
+			if (startedAt === undefined) {
+				// 条目形如 {"type":"message","id":…,"timestamp":1750000000000,…}；只认 10/13 位
+				// 的 Unix 秒/毫秒，并把明显不合理（2000 年以前、未来）的值当成没有
+				const stamp = /"timestamp":\s*(\d{10,13})/.exec(line);
+				if (stamp) {
+					const raw = Number(stamp[1]);
+					const ms = raw < 1e12 ? raw * 1000 : raw;
+					if (ms >= Date.UTC(2000, 0, 1) && ms <= Date.now() + 60_000) startedAt = ms;
+				}
+			}
 			if (line.includes('"costUsd"')) {
 				for (const match of line.matchAll(/"costUsd":\s*([\d.eE+-]+)/g)) {
 					const value = Number(match[1]);
@@ -866,7 +1039,14 @@ export async function readSessionSeed(
 				usage = usageFromFields(tail[1]);
 			}
 		}
-		return {costUsd: total, model, effort, usage, drifted: usageLines > 0 && tailHits === 0};
+		return {
+			costUsd: total,
+			model,
+			effort,
+			usage,
+			startedAt,
+			drifted: usageLines > 0 && tailHits === 0,
+		};
 	} catch {
 		return undefined;
 	} finally {
@@ -940,6 +1120,7 @@ const L10N = {
 		noModalShort: '交互式配置需要 TUI（headless 下选择器返回 undefined，不会写任何文件）。',
 		lineLabel: '状态栏',
 		dataLabel: '数据',
+		previewTitle: '预览（宽度 → 渲染；用 width 键定宽）',
 		colon: '：',
 		configHead: '配置（键 / 默认 / 生效 / 来源）：',
 		filesLabel: '文件',
@@ -1015,6 +1196,7 @@ const L10N = {
 		noModalShort: 'Interactive config needs the TUI (select returns undefined headless; nothing was written).',
 		lineLabel: 'Status line',
 		dataLabel: 'Data',
+		previewTitle: 'Preview (width → rendered; set the width key to fix it)',
 		colon: ': ',
 		configHead: 'Config (key / default / effective / source):',
 		filesLabel: 'Files',
@@ -1094,7 +1276,22 @@ export default function (cmd: ModApi): void {
 
 	let session = freshSession();
 	let requestStartedAt = 0;
+	let sessionActive = false;
+	// 解码速度：本次请求的首 token（thinking 或 text）与首段文本，以及文本增量个数
+	let firstTokenAt = 0;
+	let firstTextAt = 0;
+	let textDeltas = 0;
 	let timer: NodeJS.Timeout | undefined;
+	// 账号窗口（5h / 周）：数据、错误码、抓取时刻、在途标记与轮询句柄
+	let quotaData: QuotaData | undefined;
+	let quotaError: string | undefined;
+	let quotaFetchedAt = 0;
+	let quotaReading = false;
+	let quotaTimer: NodeJS.Timeout | undefined;
+	// stopQuota() 递增；在途请求回来时比对，避免把上一个会话的结果写进新会话
+	let quotaEpoch = 0;
+	// 宿主目录里的窗口只在「生成的表没命中」时问一次，之后按模型缓存
+	const hostWindows = new Map<string, number>();
 	// git 的自适应闸门：读完的时刻（不是开始的时刻）+ 上次实测耗时 + 是否已经为「慢」提醒过
 	let gitFinishedAt = 0;
 	let gitDurationMs = 0;
@@ -1260,18 +1457,49 @@ export default function (cmd: ModApi): void {
 		cost: flag('cost'),
 		speed: flag('speed'),
 		sub: flag('sub'),
+		quota: flag('quota'),
+		activity: flag('activity'),
+		duration: flag('duration'),
 		name: flag('name'),
 		git: flag('git'),
 		cwd: flag('cwd'),
 	});
 
 	const terminalWidth = (): number => {
-		const columns = process.stdout.columns ?? 0;
+		// 显式的 width 是「渲染行本身的最大列数」，不再扣宿主边距；
+		// 0 = 自动，按宿主的状态行内容宽度算。
+		const override = flagNumber('width');
+		if (override > 0) return override;
+		const reported = process.stdout.columns;
+		const fromEnv = Number(process.env.COLUMNS);
+		const columns = typeof reported === 'number' && Number.isFinite(reported) && reported > 0 ? reported : fromEnv;
 		if (!Number.isFinite(columns) || columns <= 0) return 0;
-		return Math.max(20, columns - 2);
+		return Math.max(1, columns - STATUS_MARGIN);
 	};
 
 	const cwdName = (): string | undefined => cwdBasename(cmd.cwd);
+
+	// 生成的窗口表未命中（BYOK / 自定义端点）时，问宿主自己算出来的窗口；命中则完全不调用，
+	// 避免每次重绘都让宿主重算一遍上下文。
+	const effectiveWindow = (model?: string): number | undefined => {
+		const known = contextWindowFor(model);
+		if (known !== undefined) return known;
+		if (!model) return undefined;
+		const cached = hostWindows.get(model);
+		if (cached !== undefined) return cached;
+		let window: number | null | undefined;
+		try {
+			window = cmd.getContextUsage?.()?.contextWindow;
+		} catch {
+			// 旧宿主上这个方法可能只在会话绑定后可用；拿不到就当没有，不让重绘因此失败
+			return undefined;
+		}
+		if (typeof window === 'number' && Number.isFinite(window) && window > 0) {
+			hostWindows.set(model, window);
+			return window;
+		}
+		return undefined;
+	};
 
 	const seedTitle = (): void => {
 		const snapshot = session.snapshot;
@@ -1320,6 +1548,13 @@ export default function (cmd: ModApi): void {
 			}
 			const hit = cacheHitRate(seed.usage);
 			if (hit !== undefined) snapshot.cacheHit = hit;
+		}
+		// 恢复会话：计时从 transcript 的第一条消息算，而不是本进程绑定的时刻
+		if (
+			seed.startedAt !== undefined &&
+			(snapshot.startedAt === undefined || seed.startedAt < snapshot.startedAt)
+		) {
+			snapshot.startedAt = seed.startedAt;
 		}
 		updateCost();
 		refresh();
@@ -1407,6 +1642,8 @@ export default function (cmd: ModApi): void {
 			barWidth: barWidth(),
 			maxWidth: terminalWidth(),
 			cwd: cwdName(),
+			contextWindow: effectiveWindow(session.snapshot.model),
+			now: Date.now(),
 		});
 
 	// 本运行到底渲不渲染底栏。两件事在这里合成一个判断：
@@ -1433,9 +1670,120 @@ export default function (cmd: ModApi): void {
 		}
 	};
 
+	// ── 账号窗口（5h / 周）──────────────────────────────────────────────────────────
+	// 与宿主 /usage 面同一个（未公开）接口：GET /alpha/billing/credits，Bearer = 本机 CLI key。
+	// 任何失败都只是让这一段消失：不 notify、不抛、不打印 key。headless 不请求、quota=false 不请求。
+	const commandAuthKey = (): string | undefined => {
+		const fromEnv = process.env.COMMAND_CODE_API_KEY?.trim();
+		if (fromEnv) return fromEnv;
+		try {
+			const parsed = JSON.parse(
+				readFileSync(join(homedir(), '.commandcode', 'auth.json'), 'utf8'),
+			) as {apiKey?: unknown};
+			return typeof parsed.apiKey === 'string' && parsed.apiKey.length > 0
+				? parsed.apiKey
+				: undefined;
+		} catch {
+			return undefined;
+		}
+	};
+
+	const readQuota = async (): Promise<QuotaData | undefined> => {
+		const key = commandAuthKey();
+		if (!key) {
+			quotaError = 'no-key';
+			return undefined;
+		}
+		try {
+			const response = await fetch(QUOTA_ENDPOINT, {
+				headers: {Authorization: `Bearer ${key}`},
+				signal: AbortSignal.timeout(QUOTA_TIMEOUT_MS),
+				// 凭据只发给这个源：不让重定向把它带去别处
+				redirect: 'error',
+			});
+			if (!response.ok) {
+				quotaError = `http-${response.status}`;
+				return undefined;
+			}
+			const data = normalizeQuota(await response.json());
+			quotaError = data ? undefined : 'shape';
+			return data;
+		} catch {
+			quotaError = 'unreachable';
+			return undefined;
+		}
+	};
+
+	const refreshQuota = async (): Promise<void> => {
+		if (quotaReading || !sessionActive || !flag('quota') || !rendersFooter()) return;
+		const epoch = quotaEpoch;
+		quotaReading = true;
+		try {
+			const data = await readQuota();
+			// 期间会话被换掉 / 关掉了 quota / 结束了：这次结果作废
+			if (epoch !== quotaEpoch || !flag('quota') || !rendersFooter()) return;
+			quotaData = data;
+			quotaFetchedAt = data ? Date.now() : 0;
+			session.snapshot.quota = data;
+			paint();
+		} finally {
+			quotaReading = false;
+		}
+	};
+
+	const stopQuota = (): void => {
+		quotaEpoch += 1;
+		if (quotaTimer) {
+			clearInterval(quotaTimer);
+			quotaTimer = undefined;
+		}
+		quotaData = undefined;
+		quotaError = undefined;
+		quotaFetchedAt = 0;
+		session.snapshot.quota = undefined;
+	};
+
+	const syncQuota = (): void => {
+		if (!sessionActive || !flag('quota') || !rendersFooter()) {
+			stopQuota();
+			return;
+		}
+		if (quotaTimer) return;
+		void refreshQuota();
+		quotaTimer = setInterval(() => void refreshQuota(), QUOTA_TTL_MS);
+		quotaTimer.unref?.();
+	};
+
+	// 报告里的配额状态：绝不带出 key，只给口径与错误码
+	const quotaState = (): string => {
+		if (!flag('quota')) return 'off';
+		if (!quotaData) return quotaError ? `unavailable (${quotaError})` : 'pending';
+		const parts: string[] = [];
+		const add = (label: string, window: QuotaWindow | undefined): void => {
+			if (!window || window.cap <= 0) return;
+			const reset =
+				window.resetAt !== undefined
+					? formatCountdown(window.resetAt - Date.now())
+					: '';
+			parts.push(
+				`${label} ${Math.round((window.used / window.cap) * 100)}%${reset ? ` ↻${reset}` : ''}`,
+			);
+		};
+		add('5h', quotaData.fiveHour);
+		add('wk', quotaData.weekly);
+		if (quotaFetchedAt > 0) {
+			parts.push(`${Math.round((Date.now() - quotaFetchedAt) / 1000)}s ago`);
+		}
+		return parts.length > 0 ? parts.join(' · ') : 'empty';
+	};
+
 	const refresh = (): void => {
 		// 本运行不渲染底栏（headless）就什么都别做：连 git 进程都不该起
-		if (!rendersFooter()) return;
+		if (!rendersFooter()) {
+			stopQuota();
+			return;
+		}
+		syncQuota();
 		paint();
 		// 该不该真去读 git 由 readGit 的自适应闸门决定；这里只管把请求发出去
 		if (flag('git')) void readGit();
@@ -1470,7 +1818,13 @@ export default function (cmd: ModApi): void {
 			if (id !== undefined && id !== session.id) {
 				session = freshSession(id);
 				requestStartedAt = 0;
+				firstTokenAt = 0;
+				firstTextAt = 0;
+				textDeltas = 0;
 			}
+			sessionActive = true;
+			// 计时起点：先用本进程绑定时刻垫底，seedSession 读到 transcript 首条时间戳后再校正
+			session.snapshot.startedAt ??= Date.now();
 			seedFromKnownSources();
 			startTimer();
 			// 幂等：会话被替换时若 start 再次触发，避免监听器叠加
@@ -1481,8 +1835,15 @@ export default function (cmd: ModApi): void {
 			refresh();
 		},
 		onSessionEnd: () => {
+			sessionActive = false;
 			stopTimer();
+			stopQuota();
 			process.stdout.off('resize', onResize);
+			// 请求计时也归零：下一个会话不该继承上一个会话的起点
+			requestStartedAt = 0;
+			firstTokenAt = 0;
+			firstTextAt = 0;
+			textDeltas = 0;
 			cmd.ui.setStatus(null);
 		},
 	});
@@ -1511,13 +1872,39 @@ export default function (cmd: ModApi): void {
 		const data = event as unknown as ModelEvent;
 		if (typeof data.model === 'string') session.snapshot.model = data.model;
 		requestStartedAt = Date.now();
+		firstTokenAt = 0;
+		firstTextAt = 0;
+		textDeltas = 0;
+		// 新请求开始就把上一次的 TTFT 清掉：这次若没有首 token，报告不能继续显示旧值
+		session.snapshot.ttftMs = undefined;
 		refresh();
+	});
+
+	// 首 token：思考与正文都算（provider 把 reasoning 计进 output）。只记时间，不重绘——
+	// 每个 delta 都画一次会把事件风暴放大成渲染风暴，TTFT 本来也只在请求结束时才有用。
+	const markFirstToken = (): void => {
+		if (firstTokenAt === 0) firstTokenAt = Date.now();
+	};
+	cmd.on('thinking_delta', event => {
+		if (!forCurrentSession(event) || requestStartedAt === 0) return;
+		const delta = (event as unknown as DeltaEvent).delta;
+		if (typeof delta === 'string' && delta.length > 0) markFirstToken();
+	});
+	cmd.on('text_delta', event => {
+		if (!forCurrentSession(event) || requestStartedAt === 0) return;
+		const delta = (event as unknown as DeltaEvent).delta;
+		if (typeof delta !== 'string' || delta.length === 0) return;
+		textDeltas += 1;
+		const now = Date.now();
+		if (firstTextAt === 0) firstTextAt = now;
+		if (firstTokenAt === 0) firstTokenAt = now;
 	});
 
 	cmd.on('model_request_end', event => {
 		if (!forCurrentSession(event)) return;
 		const data = event as unknown as ModelEvent;
 		const snapshot = session.snapshot;
+		snapshot.steps += 1;
 		if (typeof data.model === 'string') snapshot.model = data.model;
 		if (typeof data.effort === 'string') snapshot.effort = data.effort;
 		if (typeof data.usage?.inputTokens === 'number') {
@@ -1531,24 +1918,110 @@ export default function (cmd: ModApi): void {
 				session.sessionCost += cost;
 				updateCost();
 			}
+			const endedAt = Date.now();
 			const output = data.usage.outputTokens ?? 0;
-			const elapsed = (Date.now() - requestStartedAt) / 1000;
-			if (requestStartedAt > 0 && elapsed > 0 && output > 0) {
-				snapshot.speed = output / elapsed;
+			const spanMs = firstTokenAt > 0 ? endedAt - firstTokenAt : 0;
+			const wallMs = requestStartedAt > 0 ? endedAt - requestStartedAt : 0;
+			// 一次 flush 把整段文本送回来时没有逐 token 的时间线：解码速率测不出来，
+			// 退回墙钟（含 TTFT）并在报告里同时给出 TTFT，别假装那是解码速率。
+			const untimed =
+				firstTextAt > 0 &&
+				textDeltas <= UNTIMED_MAX_DELTAS &&
+				endedAt - firstTextAt < UNTIMED_WINDOW_MS &&
+				(firstTokenAt === 0 || firstTokenAt === firstTextAt);
+			if (output > 0) {
+				if (!untimed && spanMs >= MIN_DECODE_MS) {
+					snapshot.speed = output / (spanMs / 1000);
+				} else if (wallMs > 0) {
+					snapshot.speed = output / (wallMs / 1000);
+				}
+			}
+			if (firstTokenAt > 0 && requestStartedAt > 0) {
+				snapshot.ttftMs = firstTokenAt - requestStartedAt;
 			}
 		}
 		refresh();
 	});
 
-	// 子代理的模型请求不走 model_request_*（实测），用量只能从 subagent_stop 折进来；
+	// 子代理的模型请求不走 model_request_*（实测），用量只能从 subagent_* 折进来；
 	// 产品自身也不把子代理 token 计入 transcript，故这里只累计 token、不改动精确花费。
+	// progress 的 tokensUsed 是「这个 agent 到目前为止」的累计值：只接受比记录更大的数，
+	// 增量计入 subTokens，否则每来一个 progress 就重复加一遍。
+	const bumpAgentTokens = (
+		id: string | undefined,
+		tokens: number | undefined,
+		allowAnonymous = false,
+	): void => {
+		if (typeof tokens !== 'number' || tokens <= 0) return;
+		if (typeof id !== 'string') {
+			// progress 没有 id 时无法去重，丢掉比重复累计好；stop 的 tokensUsed 是最终值，可以收
+			if (allowAnonymous) session.snapshot.subTokens += tokens;
+			return;
+		}
+		const previous = session.liveAgents.get(id) ?? 0;
+		if (tokens > previous) {
+			session.liveAgents.set(id, tokens);
+			session.snapshot.subTokens += tokens - previous;
+		}
+	};
+	cmd.on('subagent_start', event => {
+		if (!forCurrentSession(event)) return;
+		const data = event as unknown as SubagentEvent;
+		if (typeof data.toolCallId === 'string' && !session.liveAgents.has(data.toolCallId)) {
+			session.liveAgents.set(data.toolCallId, 0);
+		}
+		session.snapshot.activeAgents = session.liveAgents.size;
+		refresh();
+	});
+	cmd.on('subagent_progress', event => {
+		if (!forCurrentSession(event)) return;
+		const data = event as unknown as SubagentEvent;
+		bumpAgentTokens(data.toolCallId, data.tokensUsed);
+		session.snapshot.activeAgents = session.liveAgents.size;
+		refresh();
+	});
 	cmd.on('subagent_stop', event => {
 		if (!forCurrentSession(event)) return;
-		const data = event as unknown as SubagentStopEvent;
-		if (typeof data.tokensUsed === 'number' && data.tokensUsed > 0) {
-			session.snapshot.subTokens += data.tokensUsed;
-			refresh();
-		}
+		const data = event as unknown as SubagentEvent;
+		bumpAgentTokens(data.toolCallId, data.tokensUsed, true);
+		if (typeof data.toolCallId === 'string') session.liveAgents.delete(data.toolCallId);
+		session.snapshot.activeAgents = session.liveAgents.size;
+		refresh();
+	});
+
+	cmd.on('tool_completed', event => {
+		if (!forCurrentSession(event)) return;
+		session.snapshot.tools += 1;
+		refresh();
+	});
+	cmd.on('tool_errored', event => {
+		if (!forCurrentSession(event)) return;
+		session.snapshot.tools += 1;
+		session.snapshot.toolErrors += 1;
+		refresh();
+	});
+
+	// 中断 / 失败：这次请求永远不会有一个可信的结束点。清掉起点，免得下一次成功请求
+	// 把中断等待也算进速度；上一次已经测出的 speed 保留（它仍然是真的）。
+	cmd.on('interrupted', () => {
+		requestStartedAt = 0;
+		firstTokenAt = 0;
+		firstTextAt = 0;
+		textDeltas = 0;
+	});
+	cmd.on('run_error', () => {
+		requestStartedAt = 0;
+		firstTokenAt = 0;
+		firstTextAt = 0;
+		textDeltas = 0;
+	});
+
+	// 压缩后宿主只给 tokensSaved（它自己 estimateTokens 的估算值），与 provider 报的
+	// inputTokens 不是一个口径，相减会混单位。直接把这格清空，等下一次请求给真数。
+	cmd.on('compaction_done', event => {
+		if (!forCurrentSession(event)) return;
+		session.snapshot.contextTokens = undefined;
+		refresh();
 	});
 
 	cmd.on('turn_end', event => {
@@ -1590,6 +2063,7 @@ export default function (cmd: ModApi): void {
 	const statuslineReport = (): string => {
 		const t = s();
 		const snapshot = session.snapshot;
+		const window = effectiveWindow(snapshot.model);
 		const plain = composeLine(snapshot, segments(), {
 			color: false,
 			rawModel: true,
@@ -1597,8 +2071,25 @@ export default function (cmd: ModApi): void {
 			barWidth: barWidth(),
 			maxWidth: 0,
 			cwd: cwdName(),
+			contextWindow: window,
+			now: Date.now(),
 		});
-		const window = contextWindowFor(snapshot.model);
+		const activityText = (): string => {
+			const parts: string[] = [];
+			if (snapshot.steps > 0) {
+				parts.push(`${snapshot.steps} ${snapshot.steps === 1 ? 'step' : 'steps'}`);
+			}
+			if (snapshot.tools > 0) {
+				parts.push(`${snapshot.tools} ${snapshot.tools === 1 ? 'tool' : 'tools'}`);
+			}
+			if (snapshot.toolErrors > 0) parts.push(`${snapshot.toolErrors} err`);
+			if (snapshot.activeAgents > 0) {
+				parts.push(
+					`${snapshot.activeAgents} ${snapshot.activeAgents === 1 ? 'agent' : 'agents'}`,
+				);
+			}
+			return parts.length > 0 ? parts.join(' / ') : '-';
+		};
 		const priced = modelPriceFor(snapshot.model) !== undefined;
 		const subEstimate =
 			snapshot.subTokens > 0 && snapshot.costUsd > 0 && snapshot.contextTokens
@@ -1615,7 +2106,15 @@ export default function (cmd: ModApi): void {
 				session.seededCost > 0 ? t.restored(formatCost(session.seededCost)) : ''
 			}${priced ? '' : t.priceUnknown}`,
 			`speed=${snapshot.speed ? `${Math.round(snapshot.speed)} tok/s` : '-'}`,
+			`ttft=${snapshot.ttftMs !== undefined ? formatDuration(snapshot.ttftMs) : '-'}`,
 			`sub=${snapshot.subTokens > 0 ? `${formatTokens(snapshot.subTokens)}${t.subNote(formatCost(subEstimate))}` : '-'}`,
+			`quota=${quotaState()}`,
+			`activity=${activityText()}`,
+			`duration=${
+				snapshot.startedAt !== undefined
+					? formatDuration(Date.now() - snapshot.startedAt)
+					: '-'
+			}`,
 			`name=${snapshot.title ?? '-'}`,
 			`git=${snapshot.isRepo ? (snapshot.branch ?? '-') : t.notRepo}`,
 			`render=${asciiOnly() ? 'ascii' : colorMode()}`,
@@ -1811,16 +2310,78 @@ export default function (cmd: ModApi): void {
 		return [head, ...notes.map(note => `⚠ ${note}`), '', statuslineReport()].join('\n');
 	};
 
+	// /statusline preview [w1,w2,…]：拿一份样例会话按当前配置渲染几个宽度。
+	// 移动端/桌面端用户据此决定 width 该设多少，不必真的缩小窗口反复试。
+	const previewStatusline = (args: string): string => {
+		const requested = args
+			.split(/[\s,]+/)
+			.map(part => Number(part))
+			.filter(value => Number.isFinite(value) && value > 0)
+			.map(value => Math.floor(value))
+			.slice(0, 8);
+		const widths = requested.length > 0 ? requested : [40, 60, 80, 120];
+		const now = Date.now();
+		const sample: Snapshot = {
+			isRepo: true,
+			branch: 'main',
+			ahead: 1,
+			behind: 0,
+			staged: 1,
+			modified: 2,
+			untracked: 1,
+			model: 'deepseek/deepseek-v4.1-flash',
+			effort: 'max',
+			contextTokens: 470000,
+			cacheHit: 99,
+			title: 'Simple Reply',
+			costUsd: 0.013,
+			speed: 42.4,
+			ttftMs: 850,
+			subTokens: 16000,
+			steps: 18,
+			tools: 37,
+			toolErrors: 0,
+			activeAgents: 1,
+			startedAt: now - 12 * 60_000,
+			...(flag('quota')
+				? {
+						quota: {
+							fiveHour: {used: 2100, cap: 5000, resetAt: now + 130 * 60_000},
+							weekly: {used: 1800, cap: 10_000, resetAt: now + 3 * 86_400_000},
+						},
+					}
+				: {}),
+		};
+		const lines = widths.map(width => {
+			const line = composeLine(sample, segments(), {
+				color: false,
+				rawModel: flag('raw-model'),
+				mode: colorMode(),
+				barWidth: barWidth(),
+				maxWidth: width,
+				cwd: cwdName(),
+				contextWindow: contextWindowFor(sample.model),
+				now,
+			});
+			return `${String(width).padStart(4)} → ${line}`;
+		});
+		return [s().previewTitle, ...lines].join('\n');
+	};
+
 	cmd.addCommand({
 		name: 'statusline',
 		description:
 			fileLang === 'en'
 				? 'inspect the status line and config sources; `/statusline config` edits interactively'
 				: '查看状态栏与配置来源；`/statusline config` 交互式修改',
+		argumentHint: '[config|preview] [width]',
 		handler: async (context: {args?: unknown; ui?: ModApi['ui']}) => {
-			const sub = String(context?.args ?? '').trim().toLowerCase();
-			if (sub === 'config') {
+			const [head, ...rest] = String(context?.args ?? '').trim().toLowerCase().split(/\s+/);
+			if (head === 'config') {
 				return {message: await configureStatusline(context?.ui ?? cmd.ui)};
+			}
+			if (head === 'preview') {
+				return {message: previewStatusline(rest.join(' '))};
 			}
 			return {message: statuslineReport()};
 		},
@@ -1844,25 +2405,32 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 	'Qwen/Qwen3.8-Flash': 1000000,
 	'Qwen/Qwen3.8-Max': 1000000,
 	'Qwen/Qwen3.8-Max-0902': 1000000,
+	'Qwen/Qwen3.8-Max-Prime': 1000000,
+	'Qwen/Qwen3.8-Omni-Flash': 1000000,
 	'claude-fable-5': 1000000,
 	'claude-fable-5-1': 1000000,
 	'claude-haiku-4-5-20251001': 200000,
+	'claude-haiku-5-5': 1000000,
 	'claude-opus-4-7': 1000000,
 	'claude-opus-4-8': 1000000,
 	'claude-opus-5': 1000000,
+	'claude-opus-5-5': 1000000,
 	'claude-sonnet-4-6': 1000000,
 	'claude-sonnet-5': 1000000,
+	'claude-sonnet-5-5': 1000000,
 	'deepseek/deepseek-v4-flash': 1000000,
 	'deepseek/deepseek-v4-flash-fast': 1000000,
 	'deepseek/deepseek-v4-flash-vision-exp': 1000000,
 	'deepseek/deepseek-v4-pro': 1000000,
 	'deepseek/deepseek-v4.1-flash': 1000000,
+	'deepseek/deepseek-v4.1-flash-fast': 1000000,
 	'google/gemini-3.1-flash-lite': 1000000,
 	'google/gemini-3.5-flash': 1000000,
 	'google/gemini-3.5-flash-lite': 1000000,
 	'google/gemini-3.6-flash': 1000000,
 	'google/gemini-3.7-flash': 1050000,
 	'google/gemini-3.8-flash': 1000000,
+	'google/gemini-4-argon': 1000000,
 	'gpt-5.3-codex': 400000,
 	'gpt-5.4': 400000,
 	'gpt-5.4-mini': 400000,
@@ -1871,32 +2439,49 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 	'gpt-5.6-sol': 1050000,
 	'gpt-5.6-terra': 1050000,
 	'gpt-6-astra': 1050000,
-	'inclusionai/ling-3.0-flash-sante:free': 262000,
-	'meituan/LongCat-2.0:free': 1050000,
+	'gpt-6-luna': 1050000,
+	'gpt-6-sol': 1050000,
+	'gpt-6.1-sol': 1050000,
+	'gpt-6.1-terra': 1050000,
+	'inclusionai/ling-3.1-flash': 262000,
+	'meituan/LongCat-2.0': 1050000,
 	'meta/muse-spark-1.1': 1050000,
 	'meta/muse-spark-1.2': 1050000,
 	'meta/muse-spark-1.2-contributor': 1050000,
 	'meta/muse-spark-1.3': 1050000,
 	'meta/muse-spark-1.3-contributor': 1050000,
+	'meta/muse-spark-open': 1050000,
+	'meta/muse-wonder-1.0': 1050000,
+	'minimax/minimax-m3.1-flash': 1000000,
+	'mistral/mistral-large-4': 524000,
 	'moonshotai/Kimi-K2.5': 256000,
 	'moonshotai/Kimi-K2.6': 256000,
 	'moonshotai/Kimi-K2.7-Code': 256000,
 	'moonshotai/Kimi-K2.7-Code-Highspeed': 262000,
 	'moonshotai/Kimi-K3': 1000000,
+	'moonshotai/Kimi-K3.1-Pro': 1050000,
 	'nvidia/nemotron-3-ultra-550b-a55b': 1000000,
+	'nvidia/nemotron-3.5-super-vl': 262000,
+	'ornith/ornith-1.5-122b': 262000,
 	'poolside/laguna-s-2.1-free': 256000,
+	'reflection/beam:free': 1050000,
 	'sakana/fugu-ultra': 1000000,
-	'stepfun/Step-3.5-Flash': 1000000,
+	'stealth/glyph-cluster:free': 256000,
+	'stepfun/Step-3.5-Flash': 262000,
 	'stepfun/Step-3.7-Flash': 256000,
+	'stepfun/Step-5-Preview': 1000000,
 	'tencent/hy3-paid': 262000,
 	'tencent/hy4-preview': 1050000,
 	'thinkingmachines/inkling': 256000,
 	'thinkingmachines/inkling-small': 1000000,
 	'xai/grok-4.5': 500000,
 	'xai/grok-4.6': 500000,
-	'xiaomi/mimo-v2.5': 1000000,
-	'xiaomi/mimo-v2.5-pro': 1000000,
+	'xai/grok-4.7': 500000,
+	'xiaomi/mimo-v2.6-flash': 1050000,
+	'xiaomi/mimo-v2.6-pro': 1050000,
+	'xiaomi/mimo-v2.6-pro-ultraspeed': 1050000,
 	'z-ai/glm-5.3-flash': 1050000,
+	'z-ai/glm-5.3-flashx': 1000000,
 	'zai-org/GLM-5': 200000,
 	'zai-org/GLM-5.2': 1000000,
 	'zai-org/GLM-5.2-Fast': 1000000,
@@ -1926,25 +2511,32 @@ const MODEL_PRICES: Record<string, ModelPrice> = {
 	'Qwen/Qwen3.8-Flash': {in: 0.16, out: 0.47, cacheRead: 0.016, cacheWrite: 0},
 	'Qwen/Qwen3.8-Max': {in: 2, out: 6, cacheRead: 0.25, cacheWrite: 2.5},
 	'Qwen/Qwen3.8-Max-0902': {in: 2, out: 6, cacheRead: 0.25, cacheWrite: 0},
+	'Qwen/Qwen3.8-Max-Prime': {in: 4, out: 12, cacheRead: 0.5, cacheWrite: 5},
+	'Qwen/Qwen3.8-Omni-Flash': {in: 0.15, out: 0.47, cacheRead: 0.016, cacheWrite: 0},
 	'claude-fable-5': {in: 10, out: 50, cacheRead: 1, cacheWrite: 12.5},
 	'claude-fable-5-1': {in: 10, out: 50, cacheRead: 0.25, cacheWrite: 12.5},
 	'claude-haiku-4-5-20251001': {in: 1, out: 5, cacheRead: 0.1, cacheWrite: 1.25},
+	'claude-haiku-5-5': {in: 0.1, out: 0.5, cacheRead: 0.01, cacheWrite: 0.125},
 	'claude-opus-4-7': {in: 5, out: 25, cacheRead: 0.5, cacheWrite: 6.25},
 	'claude-opus-4-8': {in: 5, out: 25, cacheRead: 0.5, cacheWrite: 6.25},
 	'claude-opus-5': {in: 5, out: 25, cacheRead: 0.5, cacheWrite: 6.25},
+	'claude-opus-5-5': {in: 4, out: 20, cacheRead: 0.2, cacheWrite: 5},
 	'claude-sonnet-4-6': {in: 3, out: 15, cacheRead: 0.3, cacheWrite: 3.75},
 	'claude-sonnet-5': {in: 2, out: 10, cacheRead: 0.2, cacheWrite: 2.5},
+	'claude-sonnet-5-5': {in: 2, out: 10, cacheRead: 0.1, cacheWrite: 2.5},
 	'deepseek/deepseek-v4-flash': {in: 0.15, out: 0.6, cacheRead: 0.003, cacheWrite: 0},
 	'deepseek/deepseek-v4-flash-fast': {in: 0.28, out: 0.56, cacheRead: 0.07, cacheWrite: 0},
 	'deepseek/deepseek-v4-flash-vision-exp': {in: 0.15, out: 0.6, cacheRead: 0.003, cacheWrite: 0},
 	'deepseek/deepseek-v4-pro': {in: 0.66, out: 1.98, cacheRead: 0.022, cacheWrite: 0},
 	'deepseek/deepseek-v4.1-flash': {in: 0.15, out: 0.6, cacheRead: 0.003, cacheWrite: 0},
+	'deepseek/deepseek-v4.1-flash-fast': {in: 0.16, out: 0.58, cacheRead: 0.016, cacheWrite: 0},
 	'google/gemini-3.1-flash-lite': {in: 0.25, out: 1.5, cacheRead: 0.03, cacheWrite: 0},
 	'google/gemini-3.5-flash': {in: 1.5, out: 9, cacheRead: 0.15, cacheWrite: 0},
 	'google/gemini-3.5-flash-lite': {in: 0.3, out: 2.5, cacheRead: 0.03, cacheWrite: 0},
 	'google/gemini-3.6-flash': {in: 1.5, out: 7.5, cacheRead: 0.15, cacheWrite: 0},
 	'google/gemini-3.7-flash': {in: 1.5, out: 7.5, cacheRead: 0.15, cacheWrite: 0.08334},
 	'google/gemini-3.8-flash': {in: 1.5, out: 7.5, cacheRead: 0.15, cacheWrite: 0},
+	'google/gemini-4-argon': {in: 2, out: 10, cacheRead: 0.1, cacheWrite: 0},
 	'gpt-5.3-codex': {in: 2, out: 8, cacheRead: 0.5, cacheWrite: 0},
 	'gpt-5.4': {in: 2.5, out: 15, cacheRead: 0.25, cacheWrite: 0},
 	'gpt-5.4-mini': {in: 0.75, out: 4.5, cacheRead: 0.075, cacheWrite: 0},
@@ -1953,32 +2545,49 @@ const MODEL_PRICES: Record<string, ModelPrice> = {
 	'gpt-5.6-sol': {in: 5, out: 30, cacheRead: 0.5, cacheWrite: 6.25},
 	'gpt-5.6-terra': {in: 2, out: 12, cacheRead: 0.2, cacheWrite: 2.5},
 	'gpt-6-astra': {in: 10, out: 50, cacheRead: 1, cacheWrite: 12.5},
-	'inclusionai/ling-3.0-flash-sante:free': {in: 0, out: 0, cacheRead: 0, cacheWrite: 0},
-	'meituan/LongCat-2.0:free': {in: 0, out: 0, cacheRead: 0, cacheWrite: 0},
+	'gpt-6-luna': {in: 0.1, out: 0.5, cacheRead: 0.01, cacheWrite: 0.125},
+	'gpt-6-sol': {in: 2, out: 10, cacheRead: 0.2, cacheWrite: 2.5},
+	'gpt-6.1-sol': {in: 2, out: 10, cacheRead: 0.1, cacheWrite: 2.5},
+	'gpt-6.1-terra': {in: 1, out: 5, cacheRead: 0.05, cacheWrite: 1.25},
+	'inclusionai/ling-3.1-flash': {in: 0.3, out: 0.9, cacheRead: 0.06, cacheWrite: 0},
+	'meituan/LongCat-2.0': {in: 0.3, out: 1.2, cacheRead: 0.006, cacheWrite: 0},
 	'meta/muse-spark-1.1': {in: 1.25, out: 4.25, cacheRead: 0.15, cacheWrite: 0},
 	'meta/muse-spark-1.2': {in: 1.25, out: 4.25, cacheRead: 0.15, cacheWrite: 0},
 	'meta/muse-spark-1.2-contributor': {in: 0.1, out: 0.2, cacheRead: 0.002, cacheWrite: 0},
 	'meta/muse-spark-1.3': {in: 1.25, out: 4.25, cacheRead: 0.15, cacheWrite: 0},
 	'meta/muse-spark-1.3-contributor': {in: 0.1, out: 0.2, cacheRead: 0.002, cacheWrite: 0},
+	'meta/muse-spark-open': {in: 1.25, out: 4.25, cacheRead: 0.15, cacheWrite: 0},
+	'meta/muse-wonder-1.0': {in: 4, out: 20, cacheRead: 0.2, cacheWrite: 0},
+	'minimax/minimax-m3.1-flash': {in: 0.15, out: 0.6, cacheRead: 0.015, cacheWrite: 0},
+	'mistral/mistral-large-4': {in: 1.36, out: 4.18, cacheRead: 0.14, cacheWrite: 0},
 	'moonshotai/Kimi-K2.5': {in: 0.6, out: 3, cacheRead: 0.1, cacheWrite: 0},
 	'moonshotai/Kimi-K2.6': {in: 0.95, out: 4, cacheRead: 0.16, cacheWrite: 0},
 	'moonshotai/Kimi-K2.7-Code': {in: 0.95, out: 4, cacheRead: 0.19, cacheWrite: 0},
 	'moonshotai/Kimi-K2.7-Code-Highspeed': {in: 1.9, out: 8, cacheRead: 0.38, cacheWrite: 0},
 	'moonshotai/Kimi-K3': {in: 3, out: 15, cacheRead: 0.3, cacheWrite: 0},
+	'moonshotai/Kimi-K3.1-Pro': {in: 2, out: 10, cacheRead: 0.2, cacheWrite: 0},
 	'nvidia/nemotron-3-ultra-550b-a55b': {in: 0.6, out: 2.4, cacheRead: 0.12, cacheWrite: 0},
+	'nvidia/nemotron-3.5-super-vl': {in: 0.2, out: 0.5, cacheRead: 0.04, cacheWrite: 0},
+	'ornith/ornith-1.5-122b': {in: 0.16, out: 0.64, cacheRead: 0.02, cacheWrite: 0},
 	'poolside/laguna-s-2.1-free': {in: 0, out: 0, cacheRead: 0, cacheWrite: 0},
+	'reflection/beam:free': {in: 0, out: 0, cacheRead: 0, cacheWrite: 0},
 	'sakana/fugu-ultra': {in: 5, out: 30, cacheRead: 0.5, cacheWrite: 0},
-	'stepfun/Step-3.5-Flash': {in: 0.1, out: 0.3, cacheRead: 0.02, cacheWrite: 0},
+	'stealth/glyph-cluster:free': {in: 0, out: 0, cacheRead: 0, cacheWrite: 0},
+	'stepfun/Step-3.5-Flash': {in: 0.09, out: 0.3, cacheRead: 0.02, cacheWrite: 0},
 	'stepfun/Step-3.7-Flash': {in: 0.2, out: 1.15, cacheRead: 0.04, cacheWrite: 0},
+	'stepfun/Step-5-Preview': {in: 1, out: 2.7, cacheRead: 0.05, cacheWrite: 0},
 	'tencent/hy3-paid': {in: 0.14, out: 0.58, cacheRead: 0.035, cacheWrite: 0},
 	'tencent/hy4-preview': {in: 0.834, out: 2.501, cacheRead: 0.042, cacheWrite: 0},
 	'thinkingmachines/inkling': {in: 1, out: 4.05, cacheRead: 0.17, cacheWrite: 0},
 	'thinkingmachines/inkling-small': {in: 0.5, out: 1.2, cacheRead: 0.1, cacheWrite: 0},
 	'xai/grok-4.5': {in: 2, out: 6, cacheRead: 0.5, cacheWrite: 0},
 	'xai/grok-4.6': {in: 2, out: 6, cacheRead: 0.5, cacheWrite: 0},
-	'xiaomi/mimo-v2.5': {in: 0.14, out: 0.28, cacheRead: 0.0028, cacheWrite: 0},
-	'xiaomi/mimo-v2.5-pro': {in: 0.435, out: 0.87, cacheRead: 0.0036, cacheWrite: 0},
+	'xai/grok-4.7': {in: 2, out: 6, cacheRead: 0.5, cacheWrite: 0},
+	'xiaomi/mimo-v2.6-flash': {in: 0.14, out: 0.28, cacheRead: 0.0028, cacheWrite: 0},
+	'xiaomi/mimo-v2.6-pro': {in: 0.435, out: 0.87, cacheRead: 0.0036, cacheWrite: 0},
+	'xiaomi/mimo-v2.6-pro-ultraspeed': {in: 4.35, out: 8.7, cacheRead: 0.036, cacheWrite: 0},
 	'z-ai/glm-5.3-flash': {in: 0.15, out: 0.5, cacheRead: 0.03, cacheWrite: 0},
+	'z-ai/glm-5.3-flashx': {in: 0.37, out: 1.25, cacheRead: 0.075, cacheWrite: 0},
 	'zai-org/GLM-5': {in: 1, out: 3.2, cacheRead: 0.2, cacheWrite: 0},
 	'zai-org/GLM-5.1': {in: 1.4, out: 4.4, cacheRead: 0.26, cacheWrite: 0},
 	'zai-org/GLM-5.2': {in: 1.4, out: 4.4, cacheRead: 0.26, cacheWrite: 0},

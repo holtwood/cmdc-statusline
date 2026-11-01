@@ -34,6 +34,15 @@ function checkClose(name, actual, expected, tolerance = 1e-12) {
 }
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 25));
+const withFetch = async (impl, fn) => {
+	const real = globalThis.fetch;
+	globalThis.fetch = impl;
+	try {
+		return await fn();
+	} finally {
+		globalThis.fetch = real;
+	}
+};
 const strip = text => (typeof text === 'string' ? text.replace(/\u001b\[[0-9;]*m/g, '') : text);
 
 // os.homedir() reads HOME on POSIX and USERPROFILE on Windows — redirect both. The suite
@@ -52,6 +61,9 @@ const {
 	formatPercent,
 	formatWindow,
 	formatCost,
+	formatDuration,
+	formatCountdown,
+	normalizeQuota,
 	estimateCost,
 	shortModel,
 	parseGitStatus,
@@ -96,6 +108,31 @@ check('formatCost small', formatCost(0.5), '$0.5');
 check('formatCost mid', formatCost(12.3456), '$12.35');
 check('formatCost big', formatCost(1234.5), '$1234.5');
 check('formatCost micro', formatCost(0.00004), '$0.00004');
+check('formatDuration ms', formatDuration(850), '850ms');
+check('formatDuration seconds', formatDuration(1200), '1.2s');
+check('formatDuration minute', formatDuration(60_000), '1m');
+check('formatDuration hour', formatDuration(3_900_000), '1h05m');
+check('formatCountdown hours', formatCountdown(130 * 60_000), '2h10m');
+check('formatCountdown days', formatCountdown((3 * 24 + 11) * 60 * 60_000), '3d11h');
+check('formatCountdown minutes', formatCountdown(45 * 60_000), '45m');
+check('formatCountdown expired', formatCountdown(-1), '');
+check(
+	'normalizeQuota reads both windows',
+	normalizeQuota({
+		windowLimits: {
+			fiveHour: {used: 2100, cap: 5000, resetAt: 123},
+			weekly: {used: 1800, cap: 10000},
+		},
+	}),
+	{fiveHour: {used: 2100, cap: 5000, resetAt: 123}, weekly: {used: 1800, cap: 10000}},
+);
+check('normalizeQuota rejects a zero cap', normalizeQuota({windowLimits: {fiveHour: {used: 1, cap: 0}}}), undefined);
+check('normalizeQuota rejects an empty body', normalizeQuota({}), undefined);
+check(
+	'normalizeQuota reads credits.windowLimits too',
+	normalizeQuota({credits: {windowLimits: {weekly: {used: 1, cap: 2}}}}),
+	{weekly: {used: 1, cap: 2}},
+);
 
 // 与产品自身记录的 costUsd 对齐（transcript 中逐条核对过的真实值）
 checkClose(
@@ -173,6 +210,9 @@ const allSegments = {
 	cost: true,
 	speed: true,
 	sub: true,
+	quota: false,
+	activity: false,
+	duration: false,
 	name: true,
 	git: true,
 	cwd: true,
@@ -219,6 +259,45 @@ check(
 	'compose unknown window drops bar + percent',
 	composeLine({...snapshot, model: 'gpt-5.6'}, allSegments, {color: false, rawModel: false, mode: 'ascii', barWidth: 12}),
 	'gpt-5.6 │ max │ ctx 28k │ $0.012 │ 42 tok/s │ Commit And Push │ main ↑1 │ +1 ~2 ?1',
+);
+check(
+	'compose host window fills an unknown model',
+	composeLine(
+		{...snapshot, model: 'byok/custom', contextTokens: 500},
+		allSegments,
+		{color: false, rawModel: false, mode: 'ascii', barWidth: 12, contextWindow: 1000},
+	),
+	'custom │ max │ ######------ 500 (50%) │ $0.012 │ 42 tok/s │ Commit And Push │ main ↑1 │ +1 ~2 ?1',
+);
+check(
+	'compose quota + activity + duration',
+	composeLine(
+		{
+			...snapshot,
+			quota: {
+				fiveHour: {used: 2100, cap: 5000, resetAt: 7_800_000 + 720_000},
+				weekly: {used: 1800, cap: 10_000, resetAt: 3 * 86_400_000 + 11 * 3_600_000 + 720_000},
+			},
+			subTokens: 16000,
+			steps: 18,
+			tools: 37,
+			toolErrors: 1,
+			activeAgents: 2,
+			startedAt: 0,
+		},
+		{...allSegments, quota: true, activity: true, duration: true},
+		{color: false, rawModel: false, mode: 'ascii', barWidth: 12, now: 720_000},
+	),
+	'deepseek-v4.1-flash │ max │ #----------- 28k (2.8%) │ $0.012 │ 42 tok/s │ sub 16k │ 5h 42% ↻2h10m │ wk 18% ↻3d11h │ 18 steps · 37 tools · 1 err · 2 agents │ 12m │ Commit And Push │ main ↑1 │ +1 ~2 ?1',
+);
+check(
+	'compose singular activity nouns',
+	composeLine(
+		{...snapshot, steps: 1, tools: 1, activeAgents: 1},
+		{...allSegments, activity: true},
+		{color: false, rawModel: false, mode: 'ascii', barWidth: 12},
+	),
+	'deepseek-v4.1-flash │ max │ #----------- 28k (2.8%) │ $0.012 │ 42 tok/s │ 1 step · 1 tool · 1 agent │ Commit And Push │ main ↑1 │ +1 ~2 ?1',
 );
 check(
 	'compose zero cost drops segment',
@@ -342,6 +421,7 @@ function makeStub({
 	cwd = FIXTURE_CWD,
 	answers = null,
 	values = new Map(),
+	contextUsage = undefined,
 } = {}) {
 	const saved = {};
 	for (const [key, value] of Object.entries(env)) {
@@ -359,6 +439,7 @@ function makeStub({
 		commands: {},
 		modals: [],
 		notices: [],
+		contextUsageCalls: 0,
 		// 测试便利：短键 -> flag 全名。宿主看到的永远是 flagName('refresh') 这种名字。
 		setFlagValue: (key, value) => void values.set(ns.flagName(key), value),
 		restore: () => {
@@ -378,6 +459,14 @@ function makeStub({
 		},
 		// 没声明过的名字一律 undefined（真宿主：e.flags.has(t) ? s.get(t) : void 0）
 		getFlag: name => (state.flagDefs.has(name) ? values.get(name) : undefined),
+		// 旧宿主没有这个方法：只有显式传入 contextUsage 时才挂上，顺带数调用次数
+		getContextUsage:
+			contextUsage === undefined
+				? undefined
+				: () => {
+						state.contextUsageCalls += 1;
+						return contextUsage;
+					},
 		hooks: hooks => void (state.hooks = hooks),
 		on: (event, handler) => void ((state.events[event] ??= []).push(handler)),
 		addCommand: command => void (state.commands[command.name] = command.handler),
@@ -453,8 +542,25 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 {
 	const {api, state} = makeStub();
 	ns.default(api);
-	check('registers 18 flags', state.flagDefs.size, 18);
-	for (const event of ['run_start', 'session_titled', 'model_request_start', 'model_request_end', 'turn_end', 'config_setting_changed'])
+	check('registers 22 flags', state.flagDefs.size, 22);
+	for (const event of [
+		'run_start',
+		'session_titled',
+		'model_request_start',
+		'model_request_end',
+		'thinking_delta',
+		'text_delta',
+		'subagent_start',
+		'subagent_progress',
+		'subagent_stop',
+		'tool_completed',
+		'tool_errored',
+		'interrupted',
+		'run_error',
+		'compaction_done',
+		'turn_end',
+		'config_setting_changed',
+	])
 		checkTrue(`registers ${event}`, Array.isArray(state.events[event]));
 	checkTrue('registers /statusline', typeof state.commands.statusline === 'function');
 
@@ -489,6 +595,456 @@ writeFileSync(join(projectDir, 'broken-session-id.meta.json'), '{not json');
 	state.hooks.onSessionEnd({reason: 'shutdown'});
 	check('session end clears status', state.statuses.at(-1), null);
 	state.restore();
+}
+
+// ── 解码速度 / TTFT / 中断 ────────────────────────────────────────────────────────
+// 速度只算「首 token → 结束」的解码段；一次 flush 测不出时退回墙钟，但 TTFT 仍然记录。
+{
+	const start = async sessionId => {
+		const {api, state} = makeStub();
+		ns.default(api);
+		state.setFlagValue('refresh', '0');
+		state.setFlagValue('git', false);
+		state.hooks.onSessionStart({source: 'startup', sessionId});
+		await settle();
+		return state;
+	};
+	{
+		const state = await start('decode-session-id');
+		const realNow = Date.now;
+		const clock = {now: 1_000_000};
+		Date.now = () => clock.now;
+		try {
+			state.events.model_request_start[0]({type: 'model_request_start', model: 'deepseek/deepseek-v4.1-flash'});
+			clock.now += 200;
+			state.events.thinking_delta[0]({type: 'thinking_delta', delta: 'hm'});
+			clock.now += 100;
+			state.events.text_delta[0]({type: 'text_delta', delta: 'a'});
+			clock.now += 700;
+			state.events.text_delta[0]({type: 'text_delta', delta: 'b'});
+			clock.now += 200;
+			state.events.model_request_end[0]({
+				type: 'model_request_end',
+				model: 'deepseek/deepseek-v4.1-flash',
+				usage: {inputTokens: 1000, outputTokens: 80},
+			});
+		} finally {
+			Date.now = realNow;
+		}
+		await settle();
+		const line = strip(state.statuses.at(-1));
+		checkTrue('decode speed excludes TTFT', line.includes('80 tok/s'), line);
+		const report = await state.commands.statusline({args: ''});
+		checkTrue('report records ttft', report.message.includes('ttft=200ms'), report.message);
+		checkTrue('report records steps', report.message.includes('activity=1 step'), report.message);
+		state.hooks.onSessionEnd({reason: 'shutdown'});
+	}
+	{
+		// 单次 flush：文本在结束前 200ms 才整段回来 → 没有解码时间线，退回墙钟
+		const state = await start('burst-session-id');
+		const realNow = Date.now;
+		const clock = {now: 2_000_000};
+		Date.now = () => clock.now;
+		try {
+			state.events.model_request_start[0]({type: 'model_request_start', model: 'deepseek/deepseek-v4.1-flash'});
+			clock.now += 800;
+			state.events.text_delta[0]({type: 'text_delta', delta: 'whole answer'});
+			clock.now += 200;
+			state.events.model_request_end[0]({
+				type: 'model_request_end',
+				model: 'deepseek/deepseek-v4.1-flash',
+				usage: {inputTokens: 1000, outputTokens: 100},
+			});
+		} finally {
+			Date.now = realNow;
+		}
+		await settle();
+		const line = strip(state.statuses.at(-1));
+		checkTrue('single flush falls back to wall clock', line.includes('100 tok/s'), line);
+		const report = await state.commands.statusline({args: ''});
+		checkTrue('single flush still reports ttft', report.message.includes('ttft=800ms'), report.message);
+		state.hooks.onSessionEnd({reason: 'shutdown'});
+	}
+	{
+		// 中断：结束点不可信，不能把中断等待算进下一次请求
+		const state = await start('interrupt-session-id');
+		const realNow = Date.now;
+		const clock = {now: 3_000_000};
+		Date.now = () => clock.now;
+		try {
+			state.events.model_request_start[0]({type: 'model_request_start', model: 'deepseek/deepseek-v4.1-flash'});
+			clock.now += 200;
+			state.events.thinking_delta[0]({type: 'thinking_delta', delta: 'hm'});
+			clock.now += 1_000;
+			state.events.model_request_end[0]({
+				type: 'model_request_end',
+				model: 'deepseek/deepseek-v4.1-flash',
+				usage: {inputTokens: 1000, outputTokens: 80},
+			});
+			state.events.model_request_start[0]({type: 'model_request_start', model: 'deepseek/deepseek-v4.1-flash'});
+			clock.now += 5_000;
+			state.events.interrupted.forEach(fn => fn({type: 'interrupted'}));
+			clock.now += 5_000;
+			state.events.model_request_end[0]({
+				type: 'model_request_end',
+				model: 'deepseek/deepseek-v4.1-flash',
+				usage: {inputTokens: 1000, outputTokens: 100},
+			});
+		} finally {
+			Date.now = realNow;
+		}
+		await settle();
+		const report = await state.commands.statusline({args: ''});
+		checkTrue('interrupt keeps the last real speed', report.message.includes('speed=80 tok/s'), report.message);
+		state.hooks.onSessionEnd({reason: 'shutdown'});
+	}
+}
+
+// ── 压缩后清空上下文 ────────────────────────────────────────────────────────────────
+{
+	const {api, state} = makeStub();
+	ns.default(api);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
+	state.hooks.onSessionStart({source: 'startup', sessionId: 'compact-session-id'});
+	await settle();
+	await useBaselineUsage(state);
+	await settle();
+	checkTrue('context before compaction', strip(state.statuses.at(-1)).includes('32k (3.2%)'), strip(state.statuses.at(-1)));
+
+	state.events.compaction_done[0]({type: 'compaction_done', tokensSaved: 1000});
+	await settle();
+	const after = strip(state.statuses.at(-1));
+	checkTrue('compaction drops the stale context', !after.includes('32k') && !after.includes('(3.2%)'), after);
+	const report = await state.commands.statusline({args: ''});
+	checkTrue('report shows ctx unknown after compaction', report.message.includes('ctx=-'), report.message);
+
+	await useBaselineUsage(state);
+	await settle();
+	checkTrue('next request restores context', strip(state.statuses.at(-1)).includes('32k (3.2%)'), strip(state.statuses.at(-1)));
+	state.hooks.onSessionEnd({reason: 'shutdown'});
+}
+
+// ── 子代理实时 token / 工具计数 ───────────────────────────────────────────────────
+{
+	const {api, state} = makeStub();
+	ns.default(api);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
+	state.setFlagValue('activity', true);
+	state.hooks.onSessionStart({source: 'startup', sessionId: 'agent-session-id'});
+	await settle();
+
+	state.events.subagent_start[0]({type: 'subagent_start', toolCallId: 'a1', subagentType: 'explore'});
+	await settle();
+	// 没有 toolCallId 的 progress 无法去重：宁可丢掉，也不能每次事件都加一遍
+	state.events.subagent_progress[0]({type: 'subagent_progress', tokensUsed: 999});
+	await settle();
+	checkTrue('anonymous progress is ignored', !strip(state.statuses.at(-1)).includes('sub 999'), strip(state.statuses.at(-1)));
+	const running = await state.commands.statusline({args: ''});
+	checkTrue('running agent counted', running.message.includes('1 agent'), running.message);
+
+	state.events.subagent_progress[0]({type: 'subagent_progress', toolCallId: 'a1', tokensUsed: 100});
+	await settle();
+	checkTrue('sub-agent tokens appear while running', strip(state.statuses.at(-1)).includes('sub 100'), strip(state.statuses.at(-1)));
+
+	state.events.subagent_progress[0]({type: 'subagent_progress', toolCallId: 'a1', tokensUsed: 250});
+	await settle();
+	const mid = strip(state.statuses.at(-1));
+	checkTrue('progress is cumulative, not additive', mid.includes('sub 250') && !mid.includes('sub 350'), mid);
+
+	state.events.tool_completed[0]({type: 'tool_completed'});
+	state.events.tool_completed[0]({type: 'tool_completed'});
+	state.events.tool_errored[0]({type: 'tool_errored'});
+	await settle();
+	const activity = strip(state.statuses.at(-1));
+	checkTrue('tool counters render', activity.includes('3 tools · 1 err · 1 agent'), activity);
+
+	state.events.subagent_stop[0]({type: 'subagent_stop', toolCallId: 'a1', tokensUsed: 300});
+	await settle();
+	const done = strip(state.statuses.at(-1));
+	checkTrue('stop settles the agent total', done.includes('sub 300') && !done.includes('sub 350'), done);
+	checkTrue('stopped agent leaves the count', done.includes('3 tools · 1 err') && !done.includes('1 agent'), done);
+	state.hooks.onSessionEnd({reason: 'shutdown'});
+}
+
+// ── 会话计时 ────────────────────────────────────────────────────────────────────────
+{
+	useHome(fakeHome);
+	const durationSession = 'duration-session-id';
+	const startedAt = Date.now() - 12 * 60_000;
+	writeFileSync(
+		join(projectDir, `${durationSession}.jsonl`),
+		[
+			JSON.stringify({type: 'message', id: 'a', timestamp: startedAt, message: {role: 'user', content: 'hi'}}),
+			'',
+		].join('\n'),
+	);
+	check('readSessionSeed reads start time', (await readSessionSeed(durationSession, FIXTURE_CWD)).startedAt, startedAt);
+
+	const secondsSession = 'seconds-session-id';
+	writeFileSync(
+		join(projectDir, `${secondsSession}.jsonl`),
+		`${JSON.stringify({type: 'message', id: 'a', timestamp: 1_700_000_000, message: {role: 'user'}})}\n`,
+	);
+	check(
+		'readSessionSeed normalizes second timestamps',
+		(await readSessionSeed(secondsSession, FIXTURE_CWD)).startedAt,
+		1_700_000_000_000,
+	);
+
+	const {api, state} = makeStub();
+	ns.default(api);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
+	state.setFlagValue('duration', true);
+	state.hooks.onSessionStart({source: 'resume', sessionId: durationSession});
+	await settle();
+	checkTrue('duration renders from transcript start', strip(state.statuses.at(-1)).includes('12m'), strip(state.statuses.at(-1)));
+	const report = await state.commands.statusline({args: ''});
+	checkTrue('report shows duration', report.message.includes('duration=12m'), report.message);
+	state.hooks.onSessionEnd({reason: 'shutdown'});
+	useHome(baseHome);
+}
+
+// ── 未知模型的窗口兜底 ──────────────────────────────────────────────────────────────
+{
+	const {api, state} = makeStub({contextUsage: {tokens: null, contextWindow: 1000, percent: null}});
+	ns.default(api);
+	state.setFlagValue('refresh', '0');
+	state.setFlagValue('git', false);
+	state.hooks.onSessionStart({source: 'startup', sessionId: 'window-session-id'});
+	await settle();
+	state.events.model_request_start[0]({type: 'model_request_start', model: 'byok/custom'});
+	state.events.model_request_end[0]({
+		type: 'model_request_end',
+		model: 'byok/custom',
+		usage: {inputTokens: 500, outputTokens: 10},
+	});
+	await settle();
+	const fallback = strip(state.statuses.at(-1));
+	checkTrue('host window fills an unknown model', fallback.includes('500 (50%)'), fallback);
+	check('host window asked once', state.contextUsageCalls, 1);
+
+	await useBaselineUsage(state);
+	await settle();
+	checkTrue('generated table wins for a known model', strip(state.statuses.at(-1)).includes('32k (3.2%)'), strip(state.statuses.at(-1)));
+	check('known model does not ask the host', state.contextUsageCalls, 1);
+	state.hooks.onSessionEnd({reason: 'shutdown'});
+}
+
+// ── 账号窗口（5h / 周） ─────────────────────────────────────────────────────────────
+{
+	// 默认关：一次网络请求都不发
+	let calls = 0;
+	await withFetch(
+		async () => {
+			calls += 1;
+			throw new Error('quota must not fetch when off');
+		},
+		async () => {
+			const {api, state} = makeStub();
+			ns.default(api);
+			state.setFlagValue('refresh', '0');
+			state.setFlagValue('git', false);
+			state.hooks.onSessionStart({source: 'startup', sessionId: 'quota-off-session'});
+			await settle();
+			check('quota off makes no request', calls, 0);
+			checkTrue('quota off has no 5h segment', !strip(state.statuses.at(-1)).includes('5h'), strip(state.statuses.at(-1)));
+			const report = await state.commands.statusline({args: ''});
+			checkTrue('report says quota=off', report.message.includes('quota=off'), report.message);
+			state.hooks.onSessionEnd({reason: 'shutdown'});
+		},
+	);
+}
+{
+	let seen;
+	const body = {
+		windowLimits: {
+			fiveHour: {used: 2100, cap: 5000, resetAt: Date.now() + 7_800_000},
+			weekly: {used: 1800, cap: 10_000, resetAt: Date.now() + 3 * 86_400_000 + 11 * 3_600_000},
+		},
+	};
+	await withFetch(
+		async (url, init) => {
+			seen = {url: String(url), auth: init.headers.Authorization, redirect: init.redirect};
+			return {ok: true, status: 200, json: async () => body};
+		},
+		async () => {
+			const {api, state} = makeStub({env: {COMMAND_CODE_API_KEY: 'test-key'}});
+			ns.default(api);
+			state.setFlagValue('refresh', '0');
+			state.setFlagValue('git', false);
+			state.setFlagValue('quota', true);
+			state.hooks.onSessionStart({source: 'startup', sessionId: 'quota-on-session'});
+			await settle();
+			const line = strip(state.statuses.at(-1));
+			checkTrue('quota renders the 5h window', line.includes('5h 42%'), line);
+			checkTrue('quota renders the weekly window', line.includes('wk 18%'), line);
+			checkTrue('quota renders the reset countdown', line.includes('↻2h'), line);
+			check('quota endpoint', seen.url, 'https://api.commandcode.ai/alpha/billing/credits');
+			check('quota auth header', seen.auth, 'Bearer test-key');
+			check('quota forbids redirects', seen.redirect, 'error');
+			const report = await state.commands.statusline({args: ''});
+			checkTrue('report shows quota numbers', report.message.includes('quota=5h 42%'), report.message);
+			checkTrue('report never leaks the key', !report.message.includes('test-key'), report.message);
+			state.hooks.onSessionEnd({reason: 'shutdown'});
+			state.restore();
+		},
+	);
+}
+{
+	// 网络失败只是让这一段消失
+	await withFetch(
+		async () => {
+			throw new Error('offline');
+		},
+		async () => {
+			const {api, state} = makeStub({env: {COMMAND_CODE_API_KEY: 'test-key'}});
+			ns.default(api);
+			state.setFlagValue('refresh', '0');
+			state.setFlagValue('git', false);
+			state.setFlagValue('quota', true);
+			state.hooks.onSessionStart({source: 'startup', sessionId: 'quota-fail-session'});
+			await settle();
+			checkTrue('quota failure drops the segment', !strip(state.statuses.at(-1)).includes('5h'), strip(state.statuses.at(-1)));
+			const report = await state.commands.statusline({args: ''});
+			checkTrue('report names the failure', report.message.includes('quota=unavailable (unreachable)'), report.message);
+			state.hooks.onSessionEnd({reason: 'shutdown'});
+			state.restore();
+		},
+	);
+}
+{
+	// 没有凭据：不请求，报告点名
+	let calls = 0;
+	await withFetch(
+		async () => {
+			calls += 1;
+			return {ok: true, status: 200, json: async () => ({})};
+		},
+		async () => {
+			const {api, state} = makeStub({env: {COMMAND_CODE_API_KEY: ''}});
+			ns.default(api);
+			state.setFlagValue('refresh', '0');
+			state.setFlagValue('git', false);
+			state.setFlagValue('quota', true);
+			state.hooks.onSessionStart({source: 'startup', sessionId: 'quota-nokey-session'});
+			await settle();
+			check('no credentials means no request', calls, 0);
+			const report = await state.commands.statusline({args: ''});
+			checkTrue('report says no-key', report.message.includes('quota=unavailable (no-key)'), report.message);
+			state.hooks.onSessionEnd({reason: 'shutdown'});
+			state.restore();
+		},
+	);
+}
+{
+	// headless：不请求（连凭据都不读）
+	let calls = 0;
+	await withFetch(
+		async () => {
+			calls += 1;
+			return {ok: true, status: 200, json: async () => ({})};
+		},
+		async () => {
+			const {api, state} = makeStub({statusCapability: false, env: {COMMAND_CODE_API_KEY: 'test-key'}});
+			ns.default(api);
+			state.setFlagValue('refresh', '0');
+			state.setFlagValue('quota', true);
+			state.hooks.onSessionStart({source: 'startup', sessionId: 'quota-headless-session'});
+			await settle();
+			check('headless makes no quota request', calls, 0);
+			state.hooks.onSessionEnd({reason: 'shutdown'});
+			state.restore();
+		},
+	);
+}
+{
+	// auth.json 兜底（没有环境变量时）
+	const authHome = homeWith(null, 'statusline-auth-home-');
+	writeFileSync(join(authHome, '.commandcode', 'auth.json'), JSON.stringify({apiKey: 'file-key'}));
+	useHome(authHome);
+	let auth;
+	await withFetch(
+		async (_url, init) => {
+			auth = init.headers.Authorization;
+			return {ok: true, status: 200, json: async () => ({windowLimits: {fiveHour: {used: 1, cap: 100}}})};
+		},
+		async () => {
+			const {api, state} = makeStub({env: {COMMAND_CODE_API_KEY: ''}});
+			ns.default(api);
+			state.setFlagValue('refresh', '0');
+			state.setFlagValue('git', false);
+			state.setFlagValue('quota', true);
+			state.hooks.onSessionStart({source: 'startup', sessionId: 'quota-file-session'});
+			await settle();
+			check('quota reads auth.json', auth, 'Bearer file-key');
+			checkTrue('file credential renders quota', strip(state.statuses.at(-1)).includes('5h 1%'), strip(state.statuses.at(-1)));
+			state.hooks.onSessionEnd({reason: 'shutdown'});
+			state.restore();
+		},
+	);
+	useHome(baseHome);
+}
+
+// ── /statusline preview ─────────────────────────────────────────────────────────────
+{
+	const {api, state} = makeStub();
+	ns.default(api);
+	const message = await state.commands.statusline({args: 'preview 40'});
+	const lines = message.message.split('\n');
+	checkTrue('preview has a heading', lines[0].includes('预览'), message.message);
+	const rendered = lines.find(line => line.startsWith('  40 → '));
+	checkTrue('preview renders the requested width', Boolean(rendered), message.message);
+	checkTrue(
+		'preview line fits the width',
+		Boolean(rendered) && visibleLength(rendered.slice('  40 → '.length)) <= 40,
+		String(rendered),
+	);
+	const defaults = await state.commands.statusline({args: 'preview'});
+	checkTrue('preview defaults include 120', defaults.message.includes(' 120 → '), defaults.message);
+}
+
+// ── 状态栏宽度 ──────────────────────────────────────────────────────────────────────
+// 宿主状态行的内容宽度是终端列数 - 3（左侧 paddingLeft:2，右侧留 1 列），不是 -2。
+// 这里把 process.stdout.columns 钉成 40：自动预算必须是 37，显式 width=40 才允许用满 40。
+{
+	const setColumns = columns => Object.defineProperty(process.stdout, 'columns', {value: columns, configurable: true});
+	const clearColumns = () => delete process.stdout.columns;
+	const paintAt = async (widthFlag, withUsage = true) => {
+		const {api, state} = makeStub();
+		ns.default(api);
+		state.setFlagValue('refresh', '0');
+		if (widthFlag !== undefined) state.setFlagValue('width', widthFlag);
+		state.hooks.onSessionStart({source: 'startup', sessionId: 'width-session-id'});
+		await settle();
+		if (withUsage) {
+			await useBaselineUsage(state);
+			await settle();
+		}
+		const line = strip(state.statuses.at(-1));
+		state.hooks.onSessionEnd({reason: 'shutdown'});
+		return line;
+	};
+	try {
+		setColumns(40);
+		const auto = await paintAt(undefined);
+		checkTrue('auto width reserves the host padding', visibleLength(auto) <= 37, `${visibleLength(auto)} → ${auto}`);
+		checkTrue('auto width still keeps the model', auto.includes('deepseek-v4.1-flash'), auto);
+		setColumns(10);
+		const tiny = await paintAt(undefined, false);
+		checkTrue(
+			'tiny terminal is not clamped up to 20',
+			tiny === null || visibleLength(tiny) <= 7,
+			String(tiny),
+		);
+		setColumns(40);
+		const explicit = await paintAt('40');
+		checkTrue('explicit width is the line budget, not the host budget', visibleLength(explicit) <= 40, `${visibleLength(explicit)} → ${explicit}`);
+	} finally {
+		clearColumns();
+	}
 }
 
 // ── flag 命名空间 ───────────────────────────────────────────────────────────────────
@@ -1605,7 +2161,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	writeFileSync(join(cliRoot, 'package.json'), JSON.stringify({name: 'command-code', version: '1.10.0'}));
 	const atFloor = makeStub();
 	ns.default(atFloor.api);
-	check('the floor version itself is supported', atFloor.state.flagDefs.size, 18);
+	check('the floor version itself is supported', atFloor.state.flagDefs.size, 22);
 	check('the floor version gets no upgrade notice', atFloor.state.notices.length, 0);
 	check('the floor version registers the command', typeof atFloor.state.commands.statusline, 'function');
 	process.argv[1] = argv1;
@@ -1616,7 +2172,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	check('unknown host version produces no notice', fresh.state.notices.length, 0);
 	checkTrue(
 		'unknown host version still registers everything',
-		fresh.state.flagDefs.size === 18 && typeof fresh.state.commands.statusline === 'function',
+		fresh.state.flagDefs.size === 22 && typeof fresh.state.commands.statusline === 'function',
 	);
 	checkTrue(
 		'unknown host version is reported as 未知',
@@ -1676,7 +2232,7 @@ check('gitGapMs backs off on slow reads', [ns.gitGapMs(1200), ns.gitGapMs(8000),
 	writeFileSync(join(cliRoot, 'package.json'), JSON.stringify({name: 'command-code', version: ''}));
 	const {api, state} = makeStub();
 	ns.default(api);
-	check('a blank version does not disable the mod', state.flagDefs.size, 18);
+	check('a blank version does not disable the mod', state.flagDefs.size, 22);
 	check('a blank version produces no upgrade notice', state.notices.length, 0);
 	check('a blank version does not throw', typeof state.commands.statusline, 'function');
 	process.argv[1] = argv1;

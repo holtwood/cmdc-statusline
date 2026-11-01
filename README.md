@@ -29,7 +29,7 @@ cmdc mods list
 | `█░░░ 32k (3.2%)` | Context of the last request: gradient bar (green→red), tokens, share of the model's window |
 | `cache 99%` | Prompt-cache hit rate of the last request |
 | `$0.013` | Session cost — transcript on resume + new requests |
-| `42 tok/s` | Output speed of the last request (wall clock, incl. TTFT) |
+| `42 tok/s` | Decode speed of the last request (first token → end; wall clock when unmeasurable) |
 | `sub 16k` | Tokens burned by sub-agents this session |
 | `Simple Reply` | Session name (survives `/reload` and resume) |
 | `main ↑1` | Git branch with ahead/behind |
@@ -53,28 +53,34 @@ first declaration wins. A file name is already a namespace; a CLI flag name is n
 {"preset": "full", "bar-width": 12, "refresh": 10, "cache": true, "cost": true}
 ```
 
-Presets: `full` (default, everything) · `minimal` (model, effort, context, bar, percent,
-git) · `usage` (context, bar, percent, cache, cost, sub). A key set next to a preset
-overrides it.
+Presets: `full` (default, all standard segments; `quota` / `activity` / `duration` are
+opt-in) · `minimal` (model, effort, context, bar, percent, git) · `usage` (context, bar,
+percent, cache, cost, sub). A key set next to a preset overrides it.
 
 | Key | Default | Notes |
 |---|---|---|
 | `model`, `effort`, `context` | `true` | model / reasoning effort / context of the last request |
 | `bar`, `bar-width`, `percent` | `true`, `12`, `true` | gradient bar, width in cells, percentage |
-| `cache`, `cost`, `speed`, `sub` | `true` | hit rate / session cost / output speed / sub-agent tokens |
+| `cache`, `cost`, `speed`, `sub` | `true` | hit rate / session cost / decode speed / sub-agent tokens |
+| `quota` | `false` | account 5-hour / weekly usage (undocumented endpoint; reads the local CLI key) |
+| `activity` | `false` | model steps / tool calls / running sub-agents |
+| `duration` | `false` | elapsed session time (appears after one minute) |
 | `name`, `git`, `cwd` | `true` | session name (24-char max) / branch + changes / dir basename |
 | `preset` | `full` | `full` / `minimal` / `usage` |
 | `raw-model`, `ascii` | `false` | keep vendor prefix / plain ASCII rendering |
 | `refresh` | `10` | seconds between git re-reads (`0` disables polling) |
+| `width` | `0` | max columns of the rendered line (`0` follows the terminal; set e.g. `40` when a desktop/mobile host cuts the tail) |
 | `lang` | `zh` | `zh` / `en` — language of the report and the config dialogs |
 
-Two commands inspect and change this without touching JSON:
+Three commands inspect and change this without touching JSON:
 
 - `/statusline` — rendered line, raw values, a `key / default / effective / source` table,
   and a warning for each unusable entry (unknown keys, wrong types, bad presets). The
   report text is Chinese by default; `lang=en` switches it to English.
 - `/statusline config` — interactive editor (pick scope → key → value → confirm); writes
   one key and repaints immediately, no `/reload`.
+- `/statusline preview [width]` — render a sample session at 40/60/80/120 columns (or the
+  widths given) to pick `width`.
 
 Caveat: `--mod-option` only counts as an override when the value differs from the built-in
 default — passing `statusline.cwd=true` explicitly won't beat a config file saying `false`.
@@ -82,7 +88,11 @@ default — passing `statusline.cwd=true` explicitly won't beat a config file sa
 ### How it works
 
 - **Sources:** model, effort and context come from request events; the cost is worked out
-  against the price table; git state refreshes by polling.
+  against the price table; speed is decode-only when the stream allows it; git state
+  refreshes by polling.
+- **Quota (opt-in):** `quota=true` reads the local CLI key (`COMMAND_CODE_API_KEY`, else
+  `~/.commandcode/auth.json`) and calls the same undocumented billing endpoint `/usage`
+  uses every 120 s; any failure just hides that segment.
 - **Colours:** use a 24-bit gradient when the terminal supports true colour, otherwise fall
   back to 256; with `ascii=true`, or when the terminal can't handle colour, you get `#`/`-`;
   `NO_COLOR` keeps the block glyphs but drops the colour.
@@ -124,7 +134,7 @@ cmdc mods list
 | `█░░░ 32k (3.2%)` | 上次请求的上下文：渐变进度条（绿→红）、token 数、占模型窗口比例 |
 | `cache 99%` | 上次请求的提示缓存命中率 |
 | `$0.013` | 会话花费 —— 恢复时的历史累计 + 新增请求 |
-| `42 tok/s` | 上次请求的输出速度（墙钟计时，含首 token 等待） |
+| `42 tok/s` | 上次请求的解码速度（首 token → 结束；测不出时退回墙钟） |
 | `sub 16k` | 本会话子代理消耗的 token |
 | `Simple Reply` | 会话名（`/reload` 与恢复后仍在） |
 | `main ↑1` | git 分支与 ahead/behind |
@@ -147,33 +157,41 @@ flag 名带 `statusline.` 前缀、`statusline.json` 里的键不带：宿主把
 {"preset": "full", "bar-width": 12, "refresh": 10, "cache": true, "cost": true}
 ```
 
-预设：`full`（默认，全部）· `minimal`（model、effort、context、bar、percent、git）·
+预设：`full`（默认，全部标准字段；`quota` / `activity` / `duration` 需单独开启）· `minimal`（model、effort、context、bar、percent、git）·
 `usage`（context、bar、percent、cache、cost、sub）。写在预设旁边的键会覆盖它。
 
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `model`、`effort`、`context` | `true` | 模型 / 推理强度 / 上次请求的上下文 |
 | `bar`、`bar-width`、`percent` | `true`、`12`、`true` | 渐变进度条、格数、百分比 |
-| `cache`、`cost`、`speed`、`sub` | `true` | 命中率 / 会话花费 / 输出速度 / 子代理 token |
+| `cache`、`cost`、`speed`、`sub` | `true` | 命中率 / 会话花费 / 解码速度 / 子代理 token |
+| `quota` | `false` | 账号 5 小时 / 每周用量（未公开接口；读取本机 CLI 凭据） |
+| `activity` | `false` | 模型步数 / 工具调用 / 运行中的子代理 |
+| `duration` | `false` | 会话已用时间（满 1 分钟后出现） |
 | `name`、`git`、`cwd` | `true` | 会话名（24 字截断）/ 分支 + 改动数 / 目录名 |
 | `preset` | `full` | `full` / `minimal` / `usage` |
 | `raw-model`、`ascii` | `false` | 保留 vendor 前缀 / 纯 ASCII 渲染 |
 | `refresh` | `10` | git 重读间隔秒数（`0` 关闭轮询） |
+| `width` | `0` | 渲染行最大列数（`0` 跟随终端；桌面/移动端宿主截断时可设 `40`） |
 | `lang` | `zh` | 报告与弹窗的语言：`zh` / `en` |
 
-不碰 JSON 也能查和改，两条命令：
+不碰 JSON 也能查和改，三条命令：
 
 - `/statusline` —— 打印渲染行、原始数值、每个键的「键 / 默认 / 生效 / 来源」表，并对每条
   用不了的内容（未知键、类型错误、不认识的预设）单独告警。（报告文字默认中文，`lang=en` 切英文。）
 - `/statusline config` —— 对话框式编辑（选作用域 → 键 → 值 → 确认），只写一个键并立刻
   重绘，不用 `/reload`。
+- `/statusline preview [宽度]` —— 用样例会话按 40/60/80/120 列（或指定宽度）渲染，帮助选 `width`。
 
 注意：`--mod-option` 只在取值与内置默认不同时才算显式覆盖——显式传 `statusline.cwd=true` 压不过
 写着 `false` 的配置文件。
 
 ### 工作原理
 
-- **数据来源：** 模型、effort、上下文都来自请求事件，积分按价格表折算，git 状态定期轮询刷新。
+- **数据来源：** 模型、effort、上下文都来自请求事件，花费按价格表折算，速度在能测时只算首 token 之后；
+  git 状态定期轮询刷新。
+- **配额（可选）：** `quota=true` 时用本机 CLI 凭据（`COMMAND_CODE_API_KEY`，否则
+  `~/.commandcode/auth.json`）每 120 秒调用 `/usage` 同款未公开接口；失败只是让这一段消失。
 - **颜色：** 终端支持真彩就用 24-bit 渐变，不然退到 256 色；用 `ascii=true`，或终端不支持色彩时，
   只能显示 `#`/`-`；设了 `NO_COLOR` 就去掉颜色、保留块字符。
 - **窄终端：** 放不下就按优先级丢字段，绝不截断，模型永远保留；窗口大小变了就重画。
@@ -213,7 +231,7 @@ cmdc mods list
 | `█░░░ 32k (3.2%)` | 上次請求的上下文：漸層進度條（綠→紅）、token 數、佔模型視窗比例 |
 | `cache 99%` | 上次請求的提示快取命中率 |
 | `$0.013` | 工作階段花費 —— 恢復時的歷史累計 + 新增請求 |
-| `42 tok/s` | 上次請求的輸出速度（牆鐘計時，含首 token 等待） |
+| `42 tok/s` | 上次請求的解碼速度（首 token → 結束；測不出時退回牆鐘） |
 | `sub 16k` | 本工作階段子代理消耗的 token |
 | `Simple Reply` | 工作階段名稱（`/reload` 與恢復後仍在） |
 | `main ↑1` | git 分支與 ahead/behind |
@@ -232,33 +250,41 @@ cmdc mods list
 {"preset": "full", "bar-width": 12, "refresh": 10, "cache": true, "cost": true}
 ```
 
-預設組合：`full`（預設，全部）· `minimal`（model、effort、context、bar、percent、git）·
+預設組合：`full`（預設，全部標準欄位；`quota` / `activity` / `duration` 需個別開啟）· `minimal`（model、effort、context、bar、percent、git）·
 `usage`（context、bar、percent、cache、cost、sub）。寫在預設組合旁邊的鍵會覆蓋它。
 
 | 鍵 | 預設 | 說明 |
 |---|---|---|
 | `model`、`effort`、`context` | `true` | 模型 / 推理強度 / 上次請求的上下文 |
 | `bar`、`bar-width`、`percent` | `true`、`12`、`true` | 漸層進度條、格數、百分比 |
-| `cache`、`cost`、`speed`、`sub` | `true` | 命中率 / 工作階段花費 / 輸出速度 / 子代理 token |
+| `cache`、`cost`、`speed`、`sub` | `true` | 命中率 / 工作階段花費 / 解碼速度 / 子代理 token |
+| `quota` | `false` | 帳號 5 小時 / 每週用量（未公開介面；讀取本機 CLI 憑證） |
+| `activity` | `false` | 模型步數 / 工具呼叫 / 執行中的子代理 |
+| `duration` | `false` | 工作階段已用時間（滿 1 分鐘後出現） |
 | `name`、`git`、`cwd` | `true` | 工作階段名稱（24 字截斷）/ 分支 + 變更數 / 目錄名稱 |
 | `preset` | `full` | `full` / `minimal` / `usage` |
 | `raw-model`、`ascii` | `false` | 保留 vendor 前綴 / 純 ASCII 渲染 |
 | `refresh` | `10` | git 重讀間隔秒數（`0` 關閉輪詢） |
+| `width` | `0` | 渲染行最大欄數（`0` 跟隨終端；桌面/行動端宿主截斷時可設 `40`） |
 | `lang` | `zh` | 報告與彈窗的語言：`zh` / `en` |
 
-不碰 JSON 也能查和改，兩條命令：
+不碰 JSON 也能查和改，三條命令：
 
 - `/statusline` —— 印出渲染行、原始數值、每個鍵的「鍵 / 預設 / 生效 / 來源」表，並對每條
   用不了的內容（未知鍵、型別錯誤、不認識的預設）單獨告警。（報告文字預設中文，`lang=en` 切英文。）
 - `/statusline config` —— 對話框式編輯（選作用域 → 鍵 → 值 → 確認），只寫一個鍵並立刻
   重繪，不用 `/reload`。
+- `/statusline preview [寬度]` —— 用範例工作階段按 40/60/80/120 欄（或指定寬度）渲染，幫助選 `width`。
 
 注意：`--mod-option` 只在取值與內建預設不同時才算顯式覆蓋——顯式傳 `statusline.cwd=true` 壓不過
 寫著 `false` 的設定檔。
 
 ### 運作原理
 
-- **資料來源：** 模型、effort、上下文都來自請求事件，花費按價格表折算，git 狀態定期輪詢更新。
+- **資料來源：** 模型、effort、上下文都來自請求事件，花費按價格表折算，速度在能測時只算首 token 之後；
+  git 狀態定期輪詢更新。
+- **配額（選用）：** `quota=true` 時用本機 CLI 憑證（`COMMAND_CODE_API_KEY`，否則
+  `~/.commandcode/auth.json`）每 120 秒呼叫 `/usage` 同款未公開介面；失敗只是讓這一段消失。
 - **顏色：** 終端支援真彩就用 24-bit 漸層，不然退到 256 色；用 `ascii=true`，或終端不支援色彩時，
   只能顯示 `#`/`-`；設了 `NO_COLOR` 就去掉顏色、保留塊字符。
 - **窄終端：** 放不下就按優先順序丟欄位，絕不截斷，模型永遠保留；視窗大小變了就重畫。
@@ -299,7 +325,7 @@ cmdc mods list
 | `█░░░ 32k (3.2%)` | 直前のリクエストのコンテキスト：グラデーションバー（緑→赤）、トークン数、ウィンドウ占有率 |
 | `cache 99%` | 直前のリクエストのプロンプトキャッシュヒット率 |
 | `$0.013` | セッション費用 — 再開時の累計 + 新規リクエスト分 |
-| `42 tok/s` | 直前のリクエストの出力速度（実時間計測、初トークン待ちを含む） |
+| `42 tok/s` | 直前のリクエストのデコード速度（最初のトークン→終了。測れないときは実時間） |
 | `sub 16k` | このセッションでサブエージェントが消費したトークン |
 | `Simple Reply` | セッション名（`/reload` や再開後も保持） |
 | `main ↑1` | git ブランチと ahead/behind |
@@ -318,7 +344,7 @@ cmdc mods list
 {"preset": "full", "bar-width": 12, "refresh": 10, "cache": true, "cost": true}
 ```
 
-プリセット: `full`（既定、すべて）· `minimal`（model, effort, context, bar, percent, git）·
+プリセット: `full`（既定、標準セグメントすべて。`quota` / `activity` / `duration` は個別に有効化）· `minimal`（model, effort, context, bar, percent, git）·
 `usage`（context, bar, percent, cache, cost, sub）。プリセットと並べて書いたキーはそれを上書き
 します。
 
@@ -326,19 +352,25 @@ cmdc mods list
 |---|---|---|
 | `model`, `effort`, `context` | `true` | モデル / 推論エフォート / 直前のリクエストのコンテキスト |
 | `bar`, `bar-width`, `percent` | `true`, `12`, `true` | グラデーションバー、セル数、割合 |
-| `cache`, `cost`, `speed`, `sub` | `true` | ヒット率 / セッション費用 / 出力速度 / サブエージェントのトークン |
+| `cache`, `cost`, `speed`, `sub` | `true` | ヒット率 / セッション費用 / デコード速度 / サブエージェントのトークン |
+| `quota` | `false` | アカウントの 5 時間 / 週次使用量（非公開 API。ローカル CLI の認証情報を読みます） |
+| `activity` | `false` | モデルのステップ数 / ツール呼び出し / 実行中のサブエージェント |
+| `duration` | `false` | セッション経過時間（1 分以上で表示） |
 | `name`, `git`, `cwd` | `true` | セッション名（24 文字で切り詰め）/ ブランチ + 変更数 / ディレクトリ名 |
 | `preset` | `full` | `full` / `minimal` / `usage` |
 | `raw-model`, `ascii` | `false` | ベンダー接頭辞を保持 / 素の ASCII 描画 |
 | `refresh` | `10` | git を再読み込みする間隔（秒）（`0` でポーリング停止） |
+| `width` | `0` | 描画行の最大桁数（`0` は端末に追従。デスクトップ/モバイルのホストで末尾が切れる場合 `40` など） |
 | `lang` | `zh` | `zh` / `en` — レポートとダイアログの言語 |
 
-JSON を触らずに確認・変更できるコマンドが 2 つあります:
+JSON を触らずに確認・変更できるコマンドが 3 つあります:
 
 - `/statusline` — 描画行、元の値、全キーの「キー / 既定 / 有効 / 出どころ」表に加え、使えなかった
   項目（未知のキー、型違い、不明なプリセット）を 1 件ずつ警告します。（レポート文は既定で中国語。`lang=en` で英語に切り替わります。）
 - `/statusline config` — ダイアログ式の編集（スコープ → キー → 値 → 確認）。1 キーだけ書き込み、
   `/reload` なしで即座に再描画します。
+- `/statusline preview [幅]` — サンプルセッションを 40/60/80/120 桁（または指定した幅）で描画し、
+  `width` を決めやすくします。
 
 注意: `--mod-option` は値が組み込み既定と異なる場合にだけ明示的な上書きと見なされます——
 `statusline.cwd=true` を明示しても `false` と書かれた設定ファイルには勝てません。
@@ -346,7 +378,10 @@ JSON を触らずに確認・変更できるコマンドが 2 つあります:
 ### 仕組み
 
 - **出どころ:** モデル・effort・コンテキストはリクエストイベントから。費用は価格表で計算し、
-  git の状態は定期的にポーリングして更新します。
+  速度は測れるときは最初のトークン以降だけを数えます。git の状態は定期的にポーリングします。
+- **クォータ（任意）:** `quota=true` のとき、ローカル CLI の認証情報（`COMMAND_CODE_API_KEY`、
+  なければ `~/.commandcode/auth.json`）で `/usage` と同じ非公開 API を 120 秒ごとに呼びます。
+  失敗してもそのセグメントが消えるだけです。
 - **色:** ターミナルがトゥルーカラーに対応していれば 24-bit グラデーション、それ以外は 256 色に
   フォールバック。`ascii=true`、またはターミナルが色に対応していないときは `#`/`-` だけです。
   `NO_COLOR` はブロック文字を残して色だけ消します。
@@ -388,7 +423,7 @@ cmdc mods list
 | `█░░░ 32k (3.2%)` | 마지막 요청의 컨텍스트: 그라데이션 바(초록→빨강), 토큰 수, 윈도우 비율 |
 | `cache 99%` | 마지막 요청의 프롬프트 캐시 적중률 |
 | `$0.013` | 세션 비용 — 재개 시 누적분 + 새 요청분 |
-| `42 tok/s` | 마지막 요청의 출력 속도(실시간 측정, 첫 토큰 대기 포함) |
+| `42 tok/s` | 마지막 요청의 디코드 속도(첫 토큰 → 종료, 측정 불가 시 실시간) |
 | `sub 16k` | 이 세션에서 서브에이전트가 쓴 토큰 |
 | `Simple Reply` | 세션 이름(`/reload`와 재개 후에도 유지) |
 | `main ↑1` | git 브랜치와 ahead/behind |
@@ -407,34 +442,43 @@ cmdc mods list
 {"preset": "full", "bar-width": 12, "refresh": 10, "cache": true, "cost": true}
 ```
 
-프리셋: `full`(기본, 전부) · `minimal`(model, effort, context, bar, percent, git) ·
+프리셋: `full`(기본, 표준 세그먼트 전부. `quota` / `activity` / `duration`은 개별 활성화) · `minimal`(model, effort, context, bar, percent, git) ·
 `usage`(context, bar, percent, cache, cost, sub). 프리셋 옆에 쓴 키는 프리셋을 덮어씁니다.
 
 | 키 | 기본값 | 설명 |
 |---|---|---|
 | `model`, `effort`, `context` | `true` | 모델 / 추론 강도 / 마지막 요청의 컨텍스트 |
 | `bar`, `bar-width`, `percent` | `true`, `12`, `true` | 그라데이션 바, 칸 수, 백분율 |
-| `cache`, `cost`, `speed`, `sub` | `true` | 적중률 / 세션 비용 / 출력 속도 / 서브에이전트 토큰 |
+| `cache`, `cost`, `speed`, `sub` | `true` | 적중률 / 세션 비용 / 디코드 속도 / 서브에이전트 토큰 |
+| `quota` | `false` | 계정 5시간 / 주간 사용량(비공개 API, 로컬 CLI 자격 증명 사용) |
+| `activity` | `false` | 모델 단계 / 도구 호출 / 실행 중인 서브에이전트 |
+| `duration` | `false` | 세션 경과 시간(1분 이상부터 표시) |
 | `name`, `git`, `cwd` | `true` | 세션 이름(24자에서 자름) / 브랜치 + 변경 수 / 디렉터리 이름 |
 | `preset` | `full` | `full` / `minimal` / `usage` |
 | `raw-model`, `ascii` | `false` | 벤더 접두사 유지 / 순수 ASCII 렌더링 |
 | `refresh` | `10` | git 다시 읽기 간격(초)(`0`이면 폴링 끔) |
+| `width` | `0` | 렌더링 줄 최대 열 수 (`0`은 터미널을 따름, 데스크톱/모바일 호스트에서 끝이 잘리면 `40` 등) |
 | `lang` | `zh` | `zh` / `en` — 리포트와 대화 상자의 언어 |
 
-JSON을 만지지 않고 확인·변경하는 명령 두 개:
+JSON을 만지지 않고 확인·변경하는 명령 세 개:
 
 - `/statusline` — 렌더링된 줄, 원시 값, 모든 키의 `키 / 기본값 / 적용 / 출처` 표와 함께 쓸 수 없는
   항목(알 수 없는 키, 잘못된 타입, 잘못된 프리셋)을 하나씩 경고합니다. (리포트는 기본 중국어이며 `lang=en`이면 영어로 바뀝니다.)
 - `/statusline config` — 대화 상자 편집기(범위 → 키 → 값 → 확인). 키 하나만 쓰고 `/reload` 없이
   즉시 다시 그립니다.
+- `/statusline preview [너비]` — 샘플 세션을 40/60/80/120열(또는 지정한 너비)로 렌더링해
+  `width`를 고르기 쉽게 합니다.
 
 주의: `--mod-option`은 값이 내장 기본값과 다를 때만 명시적 재정의로 인정됩니다 — `statusline.cwd=true`를
 명시해도 `false`라고 쓴 설정 파일에는 지지 않습니다.
 
 ### 동작 원리
 
-- **출처:** 모델·effort·컨텍스트는 요청 이벤트에서 가져오고, 비용은 가격표로 계산하며, git 상태는
-  주기적으로 폴링해 갱신합니다.
+- **출처:** 모델·effort·컨텍스트는 요청 이벤트에서 가져오고, 비용은 가격표로 계산하며, 속도는
+  측정 가능할 때 첫 토큰 이후만 셉니다. git 상태는 주기적으로 폴링해 갱신합니다.
+- **할당량(선택):** `quota=true`이면 로컬 CLI 자격 증명(`COMMAND_CODE_API_KEY`, 없으면
+  `~/.commandcode/auth.json`)으로 `/usage`와 같은 비공개 API를 120초마다 호출합니다.
+  실패하면 해당 세그먼트만 사라집니다.
 - **색상:** 터미널이 트루컬러를 지원하면 24비트 그라데이션, 아니면 256색으로 폴백합니다.
   `ascii=true`를 쓰거나 터미널이 색을 지원하지 않으면 `#`/`-`만 표시합니다. `NO_COLOR`를 설정하면
   블록 문자는 유지하고 색만 뺍니다.
@@ -477,7 +521,7 @@ cmdc mods list
 | `█░░░ 32k (3.2%)` | Contexto de la última petición: barra con degradado (verde→rojo), tokens, porcentaje de la ventana |
 | `cache 99%` | Tasa de aciertos de la caché de prompt |
 | `$0.013` | Coste de la sesión: historial al reanudar + peticiones nuevas |
-| `42 tok/s` | Velocidad de salida de la última petición (tiempo real, incluye la espera del primer token) |
+| `42 tok/s` | Velocidad de decodificación de la última petición (primer token → fin; tiempo real si no se puede medir) |
 | `sub 16k` | Tokens consumidos por subagentes en esta sesión |
 | `Simple Reply` | Nombre de la sesión (sobrevive a `/reload` y a reanudar) |
 | `main ↑1` | Rama de git con ahead/behind |
@@ -496,7 +540,7 @@ cmdc mods list
 {"preset": "full", "bar-width": 12, "refresh": 10, "cache": true, "cost": true}
 ```
 
-Presets: `full` (por defecto, todo) · `minimal` (model, effort, context, bar, percent, git)
+Presets: `full` (por defecto, todos los segmentos estándar; `quota` / `activity` / `duration` se activan aparte) · `minimal` (model, effort, context, bar, percent, git)
 · `usage` (context, bar, percent, cache, cost, sub). Una clave escrita junto a un preset lo
 prevalece.
 
@@ -504,14 +548,18 @@ prevalece.
 |---|---|---|
 | `model`, `effort`, `context` | `true` | modelo / esfuerzo / contexto de la última petición |
 | `bar`, `bar-width`, `percent` | `true`, `12`, `true` | barra, ancho en celdas, porcentaje |
-| `cache`, `cost`, `speed`, `sub` | `true` | aciertos / coste de sesión / velocidad / tokens de subagentes |
+| `cache`, `cost`, `speed`, `sub` | `true` | aciertos / coste de sesión / velocidad de decodificación / tokens de subagentes |
+| `quota` | `false` | uso de la cuenta en 5 horas / semanal (API no documentada; lee la credencial local del CLI) |
+| `activity` | `false` | pasos del modelo / llamadas a herramientas / subagentes en ejecución |
+| `duration` | `false` | tiempo transcurrido de la sesión (desde 1 minuto) |
 | `name`, `git`, `cwd` | `true` | nombre de sesión (24 caracteres máx.) / rama + cambios / directorio |
 | `preset` | `full` | `full` / `minimal` / `usage` |
 | `raw-model`, `ascii` | `false` | conservar prefijo del proveedor / render ASCII plano |
 | `refresh` | `10` | segundos entre lecturas de git (`0` desactiva el sondeo) |
+| `width` | `0` | columnas máximas de la línea (`0` sigue la terminal; usa p. ej. `40` si el host de escritorio/móvil corta el final) |
 | `lang` | `zh` | `zh` / `en` — idioma del informe y de los diálogos |
 
-Dos comandos lo consultan y lo cambian sin tocar el JSON:
+Tres comandos lo consultan y lo cambian sin tocar el JSON:
 
 - `/statusline` — la línea renderizada, los valores en bruto, una tabla
   `clave / defecto / efectivo / origen` y un aviso por cada entrada inutilizable (claves
@@ -519,6 +567,8 @@ Dos comandos lo consultan y lo cambian sin tocar el JSON:
   `lang=en` lo pasa a inglés.
 - `/statusline config` — editor interactivo (elige ámbito → clave → valor → confirma);
   escribe una sola clave y repinta al instante, sin `/reload`.
+- `/statusline preview [ancho]` — renderiza una sesión de ejemplo a 40/60/80/120 columnas (o
+  los anchos dados) para elegir `width`.
 
 Ojo: `--mod-option` solo cuenta como ajuste explícito cuando el valor difiere del
 predeterminado — pasar `statusline.cwd=true` no gana a un archivo de configuración que dice `false`.
@@ -526,8 +576,11 @@ predeterminado — pasar `statusline.cwd=true` no gana a un archivo de configura
 ### Cómo funciona
 
 - **Orígenes:** el modelo, el esfuerzo y el contexto salen de los eventos de la petición; el
-  coste se calcula con la tabla de precios; el estado de git se actualiza sondeando de vez en
-  cuando.
+  coste se calcula con la tabla de precios; la velocidad solo cuenta desde el primer token
+  cuando se puede medir; el estado de git se actualiza sondeando de vez en cuando.
+- **Cuota (opcional):** `quota=true` lee la credencial local del CLI (`COMMAND_CODE_API_KEY` o
+  `~/.commandcode/auth.json`) y llama cada 120 s a la misma API no documentada que `/usage`;
+  cualquier fallo solo oculta ese segmento.
 - **Colores:** si el terminal soporta color real se usa un degradado de 24 bits, si no se baja
   a 256 colores; con `ascii=true`, o cuando el terminal no puede con el color, se ven `#`/`-`;
   `NO_COLOR` conserva los bloques y quita solo el color.
@@ -571,7 +624,7 @@ cmdc mods list
 | `█░░░ 32k (3.2%)` | Contexte de la dernière requête : barre en dégradé (vert→rouge), jetons, part de la fenêtre |
 | `cache 99%` | Taux de succès du cache de prompt |
 | `$0.013` | Coût de la session : historique à la reprise + nouvelles requêtes |
-| `42 tok/s` | Vitesse de sortie de la dernière requête (temps réel, attente du premier jeton incluse) |
+| `42 tok/s` | Vitesse de décodage de la dernière requête (premier jeton → fin ; temps réel si non mesurable) |
 | `sub 16k` | Jetons consommés par les sous-agents dans cette session |
 | `Simple Reply` | Nom de session (survit à `/reload` et à la reprise) |
 | `main ↑1` | Branche git avec ahead/behind |
@@ -590,7 +643,7 @@ cmdc mods list
 {"preset": "full", "bar-width": 12, "refresh": 10, "cache": true, "cost": true}
 ```
 
-Préréglages : `full` (défaut, tout) · `minimal` (model, effort, context, bar, percent, git)
+Préréglages : `full` (défaut, tous les segments standard ; `quota` / `activity` / `duration` s'activent à part) · `minimal` (model, effort, context, bar, percent, git)
 · `usage` (context, bar, percent, cache, cost, sub). Une clé écrite à côté d'un préréglage
 le prime.
 
@@ -598,20 +651,26 @@ le prime.
 |---|---|---|
 | `model`, `effort`, `context` | `true` | modèle / effort / contexte de la dernière requête |
 | `bar`, `bar-width`, `percent` | `true`, `12`, `true` | barre, largeur en cellules, pourcentage |
-| `cache`, `cost`, `speed`, `sub` | `true` | succès cache / coût session / vitesse / jetons sous-agents |
+| `cache`, `cost`, `speed`, `sub` | `true` | succès cache / coût session / vitesse de décodage / jetons sous-agents |
+| `quota` | `false` | usage du compte sur 5 h / hebdomadaire (API non documentée ; lit l'identifiant local du CLI) |
+| `activity` | `false` | étapes du modèle / appels d'outils / sous-agents en cours |
+| `duration` | `false` | temps écoulé de la session (à partir d'une minute) |
 | `name`, `git`, `cwd` | `true` | nom de session (24 car. max) / branche + changements / répertoire |
 | `preset` | `full` | `full` / `minimal` / `usage` |
 | `raw-model`, `ascii` | `false` | garder le préfixe fournisseur / rendu ASCII pur |
 | `refresh` | `10` | secondes entre relectures de git (`0` coupe le polling) |
+| `width` | `0` | colonnes maximales de la ligne (`0` suit le terminal ; utilisez p. ex. `40` si l'hôte bureau/mobile coupe la fin) |
 | `lang` | `zh` | `zh` / `en` — langue du rapport et des boîtes de dialogue |
 
-Deux commandes inspectent et modifient tout ça sans toucher au JSON :
+Trois commandes inspectent et modifient tout ça sans toucher au JSON :
 
 - `/statusline` — ligne rendue, valeurs brutes, table `clé / défaut / effectif / source`,
   et un avertissement par entrée inutilisable (clé inconnue, mauvais type, préréglage
   inconnu). Le rapport est en chinois par défaut ; `lang=en` le passe en anglais.
 - `/statusline config` — éditeur interactif (portée → clé → valeur → confirmation) ;
   n'écrit qu'une clé et repeint aussitôt, sans `/reload`.
+- `/statusline preview [largeur]` — affiche une session d'exemple sur 40/60/80/120 colonnes
+  (ou les largeurs données) pour choisir `width`.
 
 Attention : `--mod-option` ne compte comme ajustement explicite que si la valeur diffère du
 défaut intégré — passer `statusline.cwd=true` ne bat pas un fichier de configuration disant `false`.
@@ -619,7 +678,11 @@ défaut intégré — passer `statusline.cwd=true` ne bat pas un fichier de conf
 ### Fonctionnement
 
 - **Sources :** le modèle, l'effort et le contexte proviennent des événements de requête ; le
-  coût se calcule via le tableau des prix ; l'état git se met à jour par sondage régulier.
+  coût se calcule via le tableau des prix ; la vitesse ne compte qu'après le premier jeton
+  quand c'est mesurable ; l'état git se met à jour par sondage régulier.
+- **Quota (facultatif) :** `quota=true` lit l'identifiant local du CLI (`COMMAND_CODE_API_KEY`,
+  sinon `~/.commandcode/auth.json`) et appelle toutes les 120 s la même API non documentée
+  que `/usage` ; tout échec masque seulement ce segment.
 - **Couleurs :** dégradé 24 bits si le terminal gère la vraie couleur, sinon 256 couleurs ;
   avec `ascii=true`, ou quand le terminal ne gère pas la couleur, on a `#`/`-` ; `NO_COLOR`
   garde les blocs et ne retire que la couleur.
@@ -663,7 +726,7 @@ cmdc mods list
 | `█░░░ 32k (3.2%)` | Kontext der letzten Anfrage: Verlaufsbalken (grün→rot), Token, Anteil am Fenster |
 | `cache 99%` | Trefferquote des Prompt-Caches |
 | `$0.013` | Sitzungskosten: Verlauf beim Fortsetzen + neue Anfragen |
-| `42 tok/s` | Ausgabetempo der letzten Anfrage (Echtzeit, inkl. Warten aufs erste Token) |
+| `42 tok/s` | Dekodiergeschwindigkeit der letzten Anfrage (erstes Token → Ende; Echtzeit, wenn nicht messbar) |
 | `sub 16k` | Von Subagenten in dieser Sitzung verbrauchte Token |
 | `Simple Reply` | Sitzungsname (übersteht `/reload` und Fortsetzen) |
 | `main ↑1` | Git-Branch mit ahead/behind |
@@ -682,7 +745,7 @@ cmdc mods list
 {"preset": "full", "bar-width": 12, "refresh": 10, "cache": true, "cost": true}
 ```
 
-Presets: `full` (Standard, alles) · `minimal` (model, effort, context, bar, percent, git) ·
+Presets: `full` (Standard, alle normalen Segmente; `quota` / `activity` / `duration` sind optional) · `minimal` (model, effort, context, bar, percent, git) ·
 `usage` (context, bar, percent, cache, cost, sub). Ein daneben gesetzter Schlüssel überstimmt
 das Preset.
 
@@ -690,14 +753,18 @@ das Preset.
 |---|---|---|
 | `model`, `effort`, `context` | `true` | Modell / Aufwand / Kontext der letzten Anfrage |
 | `bar`, `bar-width`, `percent` | `true`, `12`, `true` | Balken, Breite in Zellen, Prozentwert |
-| `cache`, `cost`, `speed`, `sub` | `true` | Trefferquote / Sitzungskosten / Tempo / Subagent-Token |
+| `cache`, `cost`, `speed`, `sub` | `true` | Trefferquote / Sitzungskosten / Dekodiergeschwindigkeit / Subagent-Token |
+| `quota` | `false` | Konto-Nutzung 5 h / wöchentlich (undokumentierte API; liest die lokalen CLI-Anmeldedaten) |
+| `activity` | `false` | Modellschritte / Tool-Aufrufe / laufende Subagenten |
+| `duration` | `false` | verstrichene Sitzungszeit (ab einer Minute) |
 | `name`, `git`, `cwd` | `true` | Sitzungsname (24 Zeichen max.) / Branch + Änderungen / Verzeichnis |
 | `preset` | `full` | `full` / `minimal` / `usage` |
 | `raw-model`, `ascii` | `false` | Anbieter-Präfix behalten / reines ASCII-Rendering |
 | `refresh` | `10` | Sekunden zwischen git-Neulesungen (`0` stoppt das Polling) |
+| `width` | `0` | maximale Spalten der Zeile (`0` folgt dem Terminal; z. B. `40`, wenn ein Desktop-/Mobil-Host das Ende abschneidet) |
 | `lang` | `zh` | `zh` / `en` — Sprache des Berichts und der Dialoge |
 
-Zwei Befehle zeigen und ändern das, ohne JSON anzufassen:
+Drei Befehle zeigen und ändern das, ohne JSON anzufassen:
 
 - `/statusline` — die gerenderte Zeile, die Rohwerte, eine
   `Schlüssel / Standard / Effektiv / Quelle`-Tabelle und je eine Warnung pro unbrauchbarem
@@ -705,6 +772,8 @@ Zwei Befehle zeigen und ändern das, ohne JSON anzufassen:
   standardmäßig auf Chinesisch; `lang=en` schaltet auf Englisch.
 - `/statusline config` — interaktiver Editor (Scope → Schlüssel → Wert → bestätigen);
   schreibt genau einen Schlüssel und zeichnet sofort neu, ohne `/reload`.
+- `/statusline preview [Breite]` — rendert eine Beispielsitzung mit 40/60/80/120 Spalten
+  (oder den angegebenen Breiten), um `width` zu wählen.
 
 Achtung: `--mod-option` gilt nur dann als expliziter Override, wenn der Wert vom eingebauten
 Standard abweicht — `statusline.cwd=true` explizit zu übergeben schlägt keine Konfigurationsdatei mit
@@ -713,7 +782,11 @@ Standard abweicht — `statusline.cwd=true` explizit zu übergeben schlägt kein
 ### Funktionsweise
 
 - **Quellen:** Modell, Aufwand und Kontext kommen aus den Request-Events; die Kosten werden
-  anhand der Preistabelle berechnet; der Git-Stand wird regelmäßig per Polling aktualisiert.
+  anhand der Preistabelle berechnet; das Tempo zählt nur ab dem ersten Token, wenn messbar;
+  der Git-Stand wird regelmäßig per Polling aktualisiert.
+- **Kontingent (optional):** `quota=true` liest die lokale CLI-Anmeldung
+  (`COMMAND_CODE_API_KEY`, sonst `~/.commandcode/auth.json`) und ruft alle 120 s dieselbe
+  undokumentierte API wie `/usage` auf; jeder Fehler blendet nur dieses Segment aus.
 - **Farben:** 24-Bit-Verlauf, wenn das Terminal echte Farbe kann, sonst 256 Farben; mit
   `ascii=true`, oder wenn das Terminal keine Farbe kann, gibt es `#`/`-`; `NO_COLOR` behält
   die Blöcke und entfernt nur die Farbe.
@@ -757,7 +830,7 @@ cmdc mods list
 | `█░░░ 32k (3.2%)` | Контекст последнего запроса: полоса с градиентом (зелёный→красный), токены, доля окна |
 | `cache 99%` | Доля попаданий в кэш промпта |
 | `$0.013` | Стоимость сессии: история при возобновлении + новые запросы |
-| `42 tok/s` | Скорость вывода последнего запроса (по настенным часам, включая ожидание первого токена) |
+| `42 tok/s` | Скорость декодирования последнего запроса (первый токен → конец; по настенным часам, если измерить нельзя) |
 | `sub 16k` | Токены, израсходованные субагентами за сессию |
 | `Simple Reply` | Имя сессии (переживает `/reload` и возобновление) |
 | `main ↑1` | Ветка git с ahead/behind |
@@ -776,7 +849,7 @@ cmdc mods list
 {"preset": "full", "bar-width": 12, "refresh": 10, "cache": true, "cost": true}
 ```
 
-Пресеты: `full` (по умолчанию, всё) · `minimal` (model, effort, context, bar, percent, git)
+Пресеты: `full` (по умолчанию, все стандартные сегменты; `quota` / `activity` / `duration` включаются отдельно) · `minimal` (model, effort, context, bar, percent, git)
 · `usage` (context, bar, percent, cache, cost, sub). Ключ, записанный рядом с пресетом,
 его перекрывает.
 
@@ -784,14 +857,18 @@ cmdc mods list
 |---|---|---|
 | `model`, `effort`, `context` | `true` | модель / рассуждения / контекст последнего запроса |
 | `bar`, `bar-width`, `percent` | `true`, `12`, `true` | полоса, ширина в ячейках, процент |
-| `cache`, `cost`, `speed`, `sub` | `true` | кэш / стоимость сессии / скорость / токены субагентов |
+| `cache`, `cost`, `speed`, `sub` | `true` | кэш / стоимость сессии / скорость декодирования / токены субагентов |
+| `quota` | `false` | расход аккаунта за 5 часов / неделю (недокументированный API; читает локальные данные CLI) |
+| `activity` | `false` | шаги модели / вызовы инструментов / работающие субагенты |
+| `duration` | `false` | время сессии (показывается с первой минуты) |
 | `name`, `git`, `cwd` | `true` | имя сессии (макс. 24 символа) / ветка + изменения / каталог |
 | `preset` | `full` | `full` / `minimal` / `usage` |
 | `raw-model`, `ascii` | `false` | префикс провайдера / чистый ASCII-рендер |
 | `refresh` | `10` | секунды между перечитываниями git (`0` выключает опрос) |
+| `width` | `0` | максимум столбцов строки (`0` — по терминалу; например, `40`, если хост настольного/мобильного приложения обрезает конец) |
 | `lang` | `zh` | `zh` / `en` — язык отчёта и диалогов |
 
-Две команды показывают и меняют настройки без правки JSON:
+Три команды показывают и меняют настройки без правки JSON:
 
 - `/statusline` — отрисованная строка, сырые значения, таблица
   `ключ / умолчание / действует / источник` и по одному предупреждению на каждую
@@ -799,6 +876,8 @@ cmdc mods list
   умолчанию на китайском; `lang=en` переключает на английский.
 - `/statusline config` — интерактивный редактор (уровень → ключ → значение → подтверждение);
   пишет ровно один ключ и сразу перерисовывает, без `/reload`.
+- `/statusline preview [ширина]` — рисует пример сессии в 40/60/80/120 колонок (или указанной
+  ширины), чтобы выбрать `width`.
 
 Важно: `--mod-option` считается явным переопределением, только если значение отличается от
 встроенного умолчания — явный `statusline.cwd=true` не перекроет конфиг с `false`.
@@ -806,7 +885,11 @@ cmdc mods list
 ### Как это работает
 
 - **Источники:** модель, рассуждения и контекст берутся из событий запроса; стоимость
-  считается по таблице цен; состояние git обновляется регулярным опросом.
+  считается по таблице цен; скорость учитывается только после первого токена, когда её
+  можно измерить; состояние git обновляется регулярным опросом.
+- **Квота (опционально):** `quota=true` читает локальные данные CLI (`COMMAND_CODE_API_KEY`
+  или `~/.commandcode/auth.json`) и раз в 120 с вызывает тот же недокументированный API,
+  что и `/usage`; любая ошибка просто скрывает этот сегмент.
 - **Цвета:** 24-битный градиент, если терминал умеет настоящий цвет, иначе 256 цветов;
   с `ascii=true`, или когда терминал не умеет цвет, будет `#`/`-`; `NO_COLOR` сохраняет
   блоки и убирает только цвет.
